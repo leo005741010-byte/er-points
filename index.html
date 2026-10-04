@@ -78,6 +78,12 @@ details.card[open]>summary{margin-bottom:12px}
 .tile .s{font-size:12.5px;color:var(--mut)}
 .tile.ok .v{color:var(--ok)}.tile.due .v{color:var(--bad)}
 .tiles.sales{grid-template-columns:repeat(2,minmax(0,1fr))}
+.today{font:inherit;width:100%;display:flex;align-items:center;gap:12px;flex-wrap:wrap;text-align:left;cursor:pointer;margin-bottom:12px;
+  background:var(--navy);color:#fff;border:none;border-radius:12px;padding:12px 16px}
+.today:hover{background:var(--navy-dark)}
+.today .tl{font-size:14px;font-weight:600}.today .tl small{font-weight:400;opacity:.75;margin-left:6px;font-size:12.5px}
+.today .tv{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}.today .tv small{font-size:13px;font-weight:400}
+.today .tr{margin-left:auto;font-size:13px;opacity:.9}
 .tile.big{background:#e9f1fb;border-color:#d3e3f6;text-align:center;padding:14px}
 .tile.big .v{font-size:32px}
 .tile.big .l{font-size:14px;color:var(--navy-dark);font-weight:600}
@@ -220,7 +226,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.04o';
+const APP_VER='2026.10.04p';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -387,6 +393,7 @@ function calcMonth(key,cfgOverride){
   // 平分池：整池除以名單人數，除不盡的零頭不計（列在提醒）
   const N=cfg.sharers.length;
   c.share=N?Math.floor(c.pool/N):0; c.poolLeft=c.pool-c.share*N;
+  c.fund+=c.poolLeft;   // 除不盡的零頭（名單是空的時就是整池）歸到科部
   cfg.sharers.forEach(nm=>{ (c.np[nm]||(c.np[nm]={it:{},promo:0,share:0})).share=c.share; });
   return c;
 }
@@ -421,11 +428,21 @@ function allKeys(){
   return [...new Set([...Object.keys(state.data.months),
     ...Object.keys(state.pay).filter(k=>Object.keys(paidOf(k)).length)])].sort();
 }
+const todayKey=()=>{ const d=new Date(); return `${d.getFullYear()-1911}-${pad(d.getMonth()+1)}`; };
+// 今天新增的紀錄（看當月分頁裡日期是今天的列）與它們的點數
+function todayInfo(){
+  const d=new Date(), key=todayKey(), md=`${d.getMonth()+1}/${d.getDate()}`, c=calcMonth(key), live=ratesFor(key);
+  const t={key,md,c,rows:c.rows.filter(r=>r.d===md),each:[],units:0,total:0,doc:0,promo:0,pool:0,fund:0};
+  t.rows.forEach(r=>{ let sum=0;
+    Object.keys(r.it).forEach(pid=>{ const q=r.it[pid], rt=rateOf(c.cfg,pid,live);
+      t.units+=q; t.doc+=q*rt.doc; t.promo+=q*rt.promo; t.pool+=q*rt.pool; t.fund+=q*rt.fund; sum+=q*(rt.doc+rt.promo+rt.pool+rt.fund); });
+    t.each.push(sum); t.total+=sum; });
+  return t;
+}
 function defaultKey(){
   const ks=allKeys(); if(!ks.length) return null;
-  const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1);   // 每月處理上個月的
-  const prev=`${d.getFullYear()-1911}-${pad(d.getMonth()+1)}`;
-  return ks.includes(prev)?prev:ks[ks.length-1];
+  const now=todayKey();   // 打開時先看當月；當月還沒有資料就看最新的一個月
+  return ks.includes(now)?now:ks[ks.length-1];
 }
 
 // ---------- 讀 Google 試算表（gviz JSONP；file:// 開啟時 fetch 會被 CORS 擋） ----------
@@ -718,8 +735,7 @@ function monthWarnings(c,list){
   if(zr.length) w.push(`品項「${zr.map(prodName).join('、')}」還沒設定點數（目前以 0 計），請在「每件點數」那張表填上。`);
   const np=Object.keys(c.noPrice);
   if(np.length) w.push(`品項「${np.map(prodName).join('、')}」還沒填品項點數，「品項總點數」沒算到它——請在「每件點數」那張表的「品項點數」欄填上。`);
-  if(!c.cfg.sharers.length&&c.pool) w.push(`平分名單是空的，專師平分池 ${fmt(c.pool)} 點沒有分出去——請在「每件點數」下方的平分名單加入姓名。`);
-  else if(c.poolLeft) w.push(`平分池 ${fmt(c.pool)} ÷ ${c.cfg.sharers.length} 位除不盡，每人 ${fmt(c.share)} 點，剩 ${fmt(c.poolLeft)} 點沒分。`);
+  if(!c.cfg.sharers.length&&c.pool) w.push(`平分名單是空的，專師平分池 ${fmt(c.pool)} 點全部歸到科部了——請在「每件點數」下方的平分名單加入姓名。`);
   if(c.gone) w.push('試算表現在讀不到這個月的分頁，以下是最後一次讀到的內容（因為已有確認紀錄所以保留）。');
   if(sw.mismatch) w.push(`試算表有 ${sw.mismatch} 筆的日期與所在分頁月份不符（已依分頁月份計）。`);
   if(sw.undated) w.push(`試算表有 ${sw.undated} 件沒有日期也不在月份分頁、未計入。`);
@@ -765,6 +781,11 @@ function renderMonth(){
   // 品項概況：總點數＝各品項件數×品項點數；筆數＝有品項的紀錄數
   const pk=shiftKey(cur,-1), pc=state.data.months[pk]?calcMonth(pk):null;
   const dl=pc&&pc.sales?(c.sales-pc.sales)/pc.sales*100:null;
+  if(cur===todayKey()){
+    const t=todayInfo();
+    h+=`<button class="today" data-act="today"><span class="tl">今日增加<small>${t.md}</small></span><span class="tv">${fmt(t.total)}<small> 點</small></span>
+      <span class="tr">${t.rows.length?`${t.units} 件・${t.rows.length} 筆　看明細 ›`:'今天還沒有新增'}</span></button>`;
+  }
   h+=`<div class="tiles sales">
     <div class="tile big"><div class="v">${fmt(c.sales)}</div><div class="l">品項總點數</div>
       <div class="s">${dl==null?'沒有上個月的資料可比':`較上月 <span class="${dl>=0?'up':'dn'}">${dl>=0?'▲ +':'▼ '}${dl.toFixed(1)}%</span>`}</div></div>
@@ -801,7 +822,7 @@ function renderMonth(){
   if(fp){
     const fpids=pids.filter(pid=>fp.it[pid]);
     h+=sec('f','科部',fp.amt,fp.rec&&fp.rec.amt>=fp.amt?'<span class="tag ok">✓ 已確認</span>':'<span class="tag no">未確認</span>',
-    `<div class="sec-head"><div class="hint">不屬於醫師或專師個人的部分。歸入科部後按「確認」。</div></div>
+    `<div class="sec-head"><div class="hint">不屬於醫師或專師個人的部分${c.poolLeft?`（含專師平分除不盡的 ${fmt(c.poolLeft)} 點）`:''}。歸入科部後按「確認」。</div></div>
     <div class="tw"><table class="ppl"><thead><tr><th class="l">項目</th>${fpids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th class="l">確認</th></tr></thead><tbody>
     <tr class="${fp.rec&&fp.rec.amt===fp.amt?'paid':''}"><td class="l nmc"><b>科部</b></td>${fpids.map(pid=>qtd(fp.it[pid],pid)).join('')}<td class="amt">${fmt(fp.amt)}</td><td class="st">${payCell(fp)}</td></tr></tbody></table></div>`);
   }
@@ -934,6 +955,19 @@ function refreshCfgRow(pid){
   tr.querySelector('[data-c=all]').textContent=fmt(d.all);
 }
 
+// ---------- 今日明細 ----------
+function showToday(){
+  const t=todayInfo(), [y,m]=t.key.split('-').map(Number), day=t.md.split('/')[1];
+  $('dlg').innerHTML=`<h2>今日明細（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
+    <div class="hint">今天新增 ${t.rows.length} 筆、${t.units} 件，總點數 ${fmt(t.total)} 點（醫師 ${fmt(t.doc)}＋主要 ${fmt(t.promo)}＋平分 ${fmt(t.pool)}${t.fund?`＋科部 ${fmt(t.fund)}`:''}）。「序」對應試算表該分頁的序號。</div>
+    <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th class="l">主要</th><th>總點數</th></tr></thead><tbody>`+
+    (t.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td>`+
+      `<td class="l">${esc(r.doc)||'<span style="color:var(--bad)">未填</span>'}</td><td class="l">${esc(r.np)||'<span style="color:var(--bad)">未填</span>'}</td><td class="n">${fmt(t.each[i])}</td></tr>`).join('')||
+     '<tr><td class="l mut" colspan="5">今天還沒有新增的紀錄</td></tr>')+
+    (t.rows.length?`<tr class="tot"><td class="l" colspan="4">合計</td><td class="amt">${fmt(t.total)}</td></tr>`:'')+'</tbody></table></div>';
+  $('mask').classList.add('on');
+}
+
 // ---------- 逐筆明細 ----------
 function showDetail(pk){
   const role=pk[0], name=pk.slice(2), c=calcMonth(cur), f=role==='d'?'doc':'np';
@@ -998,7 +1032,7 @@ function printSheet(){
     <table><thead><tr><th class="l">姓名</th>${th}<th>主要點數</th><th>平分</th><th>點數</th><th>確認日</th><th>簽名</th></tr></thead><tbody>
     ${nps.map(p=>`<tr><td class="l">${esc(p.name)}</td>${q(p)}<td>${fmt(p.promo)}</td><td>${fmt(p.share)}</td><td>${fmt(p.amt)}</td><td>${paidAt(p)}</td><td class="sig"></td></tr>`).join('')}</tbody></table>
     ${fund?`<h2>科部（不屬於個人）：${fmt(fund.amt)} 點${fund.rec?`　確認日 ${paidAt(fund)}`:''}</h2>`:''}
-    <div class="pf">計算方式：${esc(rateText(c.cfg,pids))}。<br>專師平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點${c.poolLeft?`（餘 ${fmt(c.poolLeft)} 點）`:''}。件數為本人看診（醫師）或主要（專師）之件數。</div>
+    <div class="pf">計算方式：${esc(rateText(c.cfg,pids))}。<br>專師平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點${c.poolLeft?`（除不盡的 ${fmt(c.poolLeft)} 點歸科部）`:''}。件數為本人看診（醫師）或主要（專師）之件數。</div>
     <div class="sign"><span>製表：＿＿＿＿＿＿</span><span>主任：＿＿＿＿＿＿</span></div>`;
   window.print();
 }
@@ -1452,6 +1486,7 @@ function act(a,t,ev){
     state.pay[cur].cfg=clone(cfgFor(cur)); state.pay[cur].cfgT=Date.now(); saveState(); renderAll();
   }
   else if(a==='detail') showDetail(k);
+  else if(a==='today') showToday();
   else if(a==='close') $('mask').classList.remove('on');
   else if(a==='year'){ yearSel=t.value; renderYear(); }
   else if(a==='print') printSheet();
