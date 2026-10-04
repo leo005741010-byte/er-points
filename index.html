@@ -220,7 +220,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.04n';
+const APP_VER='2026.10.04o';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -291,6 +291,7 @@ function loadState(){
 function normState(s){
   s.cfg=s.cfg||{}; s.cfg.rates=s.cfg.rates||{};
   s.cfg.views=s.cfg.views||{};   // 個人查看連結 {姓名:{tok,t}｜{del:1,t}}
+  s.cfg.rateSets=s.cfg.rateSets||{};   // 各月自己的每件點數 {'115-10':{r:{品項:{…}},t}｜{del:1,t}}，見 ratesFor()
   if(!Array.isArray(s.cfg.sharers)) s.cfg.sharers=null;   // null＝跟著試算表統計頁的專師名單
   s.data=s.data||{}; s.data.months=s.data.months||{}; s.data.extra=s.data.extra||{};
   s.data.roster=s.data.roster||{}; s.data.roster.np=s.data.roster.np||[]; s.data.roster.doc=s.data.roster.doc||[];
@@ -330,9 +331,26 @@ function liveRates(){
   return o;
 }
 function liveSharers(){ return (state.cfg.sharers||state.data.roster.np||[]).slice(); }
-function liveCfg(){ return {products:liveRates(),sharers:liveSharers()}; }
-// 有確認紀錄的月份沿用當時的設定（之後調整點數／名單，不會回頭改到已確認過的月份）
-function monthCfg(key){ const pm=state.pay[key]; return (pm&&pm.cfg)||liveCfg(); }
+// 每件點數可以每個月不同。某個月存過自己的一組（cfg.rateSets[月]）時，從那個月起適用，
+// 直到下一個有自己設定的月份為止——沒有另外改的月份，就沿用前面最近的那一組。
+// 比所有設定都早的月份用 liveRates()（最原始的那一份）。
+function rateSetKey(key){   // 這個月實際用的是哪個月存的那一組；null＝原始設定
+  const rs=state.cfg.rateSets||{}, ks=Object.keys(rs).filter(k=>k<=key&&rs[k]&&!rs[k].del).sort();
+  return ks.length?ks[ks.length-1]:null;
+}
+function ratesFor(key){
+  const o=liveRates(), sk=key?rateSetKey(key):null;
+  if(!sk) return o;
+  const r=state.cfg.rateSets[sk].r||{};
+  Object.keys(o).forEach(pid=>{ const u=r[pid]; if(!u) return;
+    FIELDS.forEach(f=>{ if(u[f]!=null&&u[f]!=='') o[pid][f]=Math.max(0,Number(u[f])||0); }); });
+  return o;
+}
+function cfgFor(key){ return {products:ratesFor(key),sharers:liveSharers()}; }
+// 有確認紀錄的月份用當時固定下來的設定（pm.cfg）；其餘照 cfgFor
+function monthCfg(key){ const pm=state.pay[key]; return (pm&&pm.cfg)||cfgFor(key); }
+// 表格上要顯示的：這個月實際在用的每件點數
+function monthRates(key){ const cfg=monthCfg(key), live=ratesFor(key), o={}; productList().forEach(p=>{ o[p.id]=rateOf(cfg,p.id,live); }); return o; }
 function paidOf(key){   // 只回有效的確認紀錄（取消的 {del:1} 不算）
   const p=(state.pay[key]&&state.pay[key].paid)||{}, o={};
   Object.keys(p).forEach(k=>{ if(!p[k].del) o[k]=p[k]; });
@@ -342,19 +360,19 @@ function paidOf(key){   // 只回有效的確認紀錄（取消的 {del:1} 不�
 function snapDiffers(key){
   const pm=state.pay[key]; if(!pm||!pm.cfg) return false;
   const sig=c=>JSON.stringify([people(c).map(p=>p.pk+'='+p.amt).sort(),Math.round(c.sales)]);   // 品項點數不同也算
-  return sig(calcMonth(key))!==sig(calcMonth(key,liveCfg()));
+  return sig(calcMonth(key))!==sig(calcMonth(key,cfgFor(key)));
 }
 
 // ---------- 計算 ----------
 // 某份設定裡某品項的每件點數。科部、品項點數是後來才加的：舊的月份快照沒有這些欄時先跟著現行設定，
 // 等那個月下次有註記動作（ensureMonth）才寫進快照固定下來
 function rateOf(cfg,pid,live){
-  const r=cfg.products[pid]||ZERO, lv=((live||liveRates())[pid])||ZERO;
+  const r=cfg.products[pid]||ZERO, lv=((live||ratesFor(cur||''))[pid])||ZERO;
   return {doc:Number(r.doc)||0,promo:Number(r.promo)||0,pool:Number(r.pool)||0,
     fund:r.fund!=null?(Number(r.fund)||0):(lv.fund||0), price:r.price!=null?(Number(r.price)||0):(lv.price||0)};
 }
 function calcMonth(key,cfgOverride){
-  const md=state.data.months[key], cfg=cfgOverride||monthCfg(key), live=liveRates(), rc={};
+  const md=state.data.months[key], cfg=cfgOverride||monthCfg(key), live=ratesFor(key), rc={};
   const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,fund:0,fundIt:{},vendor:0,units:0,sales:0,noPrice:{},zeroRate:{}};
   c.rows.forEach(r=>Object.keys(r.it).forEach(pid=>{
     const q=r.it[pid], rt=rc[pid]||(rc[pid]=rateOf(cfg,pid,live));
@@ -825,22 +843,30 @@ function rateDerived(r){ return {np:r.promo+r.pool,all:r.doc+r.promo+r.pool+r.fu
 // 專師的個人頁會即時顯示這些點數，所以不讓打到一半的數字直接生效。
 let rateDraft={};   // {品項:{欄位:輸入框裡的字}}
 const draftDirty=()=>Object.keys(rateDraft).length>0;
-function draftRates(){   // 已儲存的點數套上草稿，只給表格右邊的試算欄用
-  const o=liveRates();
+function draftRates(){   // 這個月的點數套上草稿：表格右邊的試算欄用，按儲存時也是存這一份
+  const o=monthRates(cur||'');
   Object.keys(rateDraft).forEach(pid=>{ if(!o[pid]) return;
     Object.keys(rateDraft[pid]).forEach(f=>{ const v=rateDraft[pid][f]; o[pid][f]=v===''?(Number(defRate(pid)[f])||0):Math.max(0,Number(v)||0); }); });
   return o;
 }
 function renderRateSave(){
   const el=$('rates-save'); if(!el) return;
-  el.innerHTML=draftDirty()?`<div class="note warn" style="margin:10px 0 0"><b>有還沒儲存的修改。</b>按「儲存」才會生效；在那之前，下面的點數和專師個人頁看到的都還是原本的數字。
+  el.innerHTML=draftDirty()&&cur?`<div class="note warn" style="margin:10px 0 0"><b>有還沒儲存的修改。</b>按「儲存」後從 ${keyLabel(cur)} 起適用（之後沒有另外修改的月份也跟著）；在那之前，下面的點數和專師個人頁看到的都還是原本的數字。
     <div class="row"><button class="btn" data-act="rate-save">儲存</button><button class="btn outline" data-act="rate-cancel">取消修改</button></div></div>`:'';
 }
 function renderRates(){
   const el=$('rates-view');
   if(!(el.contains(document.activeElement)&&document.activeElement.tagName==='INPUT')){   // 正在打字就不重畫
-    const saved=liveRates(), rates=draftRates(), sh=liveSharers(), auto=!state.cfg.sharers, N=sh.length;
-    el.innerHTML=`<div class="hint">白色格子可以改（每一件的點數），<b>改完要按「儲存」才會生效</b>。「品項點數」只用來算品項總點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
+    const saved=monthRates(cur||''), rates=draftRates(), sh=liveSharers(), auto=!state.cfg.sharers, N=sh.length;
+    // 這個月的點數是自己的一組、還是沿用前面的
+    const rs=state.cfg.rateSets||{}, own=!!(cur&&rs[cur]&&!rs[cur].del), src=cur?rateSetKey(cur):null;
+    const prev=cur?rateSetKey(shiftKey(cur,-1)):null, lab=k=>k?keyLabel(k)+'的設定':'最原始的設定';
+    const from=!cur?'':own?`<b>${keyLabel(cur)}有自己的設定。</b>　<button class="btn mini ghost" data-act="rate-inherit">改回沿用${lab(prev)}</button>`
+      :`${keyLabel(cur)}目前<b>沿用${lab(src)}</b>，沒有另外修改。`;
+    $('card-rates').querySelector('summary').textContent='✏ 每件點數'+(cur?'（'+keyLabel(cur)+'）':'');
+    el.innerHTML=`<div class="note info" style="margin:0 0 10px">${from}</div>
+    <div class="hint">每個月的點數可以不一樣：在想改的那個月把白色格子改好，<b>按「儲存」才會生效</b>。儲存後從那個月起適用，之後沒有另外修改的月份會跟著沿用，之前的月份不受影響。<br>
+      「品項點數」只用來算品項總點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
     <div class="tw"><table><thead><tr><th class="l">品項</th><th>品項點數</th><th>醫師</th><th>主要</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
     productList().map(p=>{ const r=rates[p.id], d=rateDerived(r), id=esc(p.id);
       const dr=rateDraft[p.id]||{};
@@ -849,8 +875,6 @@ function renderRates(){
     `</tbody></table></div>
     <div id="rates-save"></div>
     <div id="rates-note"></div>
-    <div class="row">${window.COMMISSION_DEFAULT_RATES?'<button class="btn mini ghost" data-act="rate-reset">↺ 點數全部恢復預設值</button>':''}
-      <span class="mut" style="font-size:12.5px">修改只影響<b>還沒確認過</b>的月份；已經有確認紀錄的月份照當時的點數，不會被回頭改到。</span></div>
     <h3>專師平分名單（目前 <span class="cfg-n">${N}</span> 位，「其餘專師平分」的點數由這些人均分，主要的人自己也分得到）</h3>
     <div class="chips">${sh.map(n=>`<span class="chip">${esc(n)}<button title="移出名單" data-act="sharer-del" data-n="${esc(n)}">×</button></span>`).join('')||'<span class="mut">（空的）</span>'}</div>
     <div class="row"><input type="text" id="sharer-new" placeholder="新增姓名" style="width:130px"><button class="btn mini outline" data-act="sharer-add">＋加入</button>
@@ -858,13 +882,13 @@ function renderRates(){
   }
   renderRateSave(); renderRatesNote();
 }
-// 目前看的月份已有確認紀錄、且照當時設定算出來的點數和現行設定不同 → 在點數卡裡說明，並給「這個月也改用新數字」的按鈕
+// 目前看的月份已有確認紀錄（點數與平分名單在第一次確認時固定下來了），而且和現在的設定算出來不一樣 → 說明並給「改用現在的設定」的按鈕
 function renderRatesNote(){
   const el=$('rates-note'); if(!el) return;
   if(!cur||!snapDiffers(cur)){ el.innerHTML=''; return; }
   const c=calcMonth(cur), m=keyLabel(cur);
-  el.innerHTML=`<div class="note info"><b>${m}已經有確認紀錄</b>，所以這個月仍照當時的點數計算（${esc(rateText(c.cfg,monthPids(c)))}；平分 ${c.cfg.sharers.length} 位），上面的修改不會動到它。　`+
-    `<button class="btn mini outline" data-act="resnap">讓${m}也改用上面的數字重算</button></div>`;
+  el.innerHTML=`<div class="note info"><b>${m}已經有確認紀錄</b>，點數和平分名單照當時的固定下來了（${esc(rateText(c.cfg,monthPids(c)))}；平分 ${c.cfg.sharers.length} 位），和現在的設定算出來不一樣。　`+
+    `<button class="btn mini outline" data-act="resnap">${m}改用現在的設定重算</button></div>`;
 }
 function renderCfg(){
   const el=$('cfg-view');
@@ -927,9 +951,9 @@ function showDetail(pk){
 // 第一次註記時把當下的設定存成這個月的快照
 function ensureMonth(key){
   const pm=state.pay[key]||(state.pay[key]={}); pm.paid=pm.paid||{};
-  if(!pm.cfg){ pm.cfg=clone(liveCfg()); pm.cfgT=Date.now(); }
+  if(!pm.cfg){ pm.cfg=clone(cfgFor(key)); pm.cfgT=Date.now(); }
   else{   // 加科部之前留下的快照：把現行的科部點數寫進去固定下來
-    const live=liveRates(); let ch=false;
+    const live=ratesFor(key); let ch=false;
     Object.keys(pm.cfg.products||{}).forEach(pid=>{ const r=pm.cfg.products[pid]; if(!r) return;
       ['fund','price'].forEach(f=>{ if(r[f]==null){ r[f]=(live[pid]||ZERO)[f]; ch=true; } }); });
     if(ch) pm.cfgT=Date.now();
@@ -1063,7 +1087,7 @@ function buildPayload(){
   Object.assign(rates,liveRates());
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm||(!Object.keys(pm.paid||{}).length&&!pm.cfgT)) return;
     pay[k]={paid:pm.paid||{},cfg:pm.cfg||null,cfgT:pm.cfgT||0}; });
-  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{}},pay};
+  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{}},pay};
 }
 const rateSum=r=>r?FIELDS.reduce((t,f)=>t+(Number(r[f])||0),0):0;
 // 本機設定檔（sheet-config.js）的預設值新增了欄位（例如後來才加的科部）時，把還沒填過的欄位補成明確數字、
@@ -1089,7 +1113,8 @@ function mergeRemote(rm){
     });
   }
   if((rc.tS||0)>(c.tS||0)){ c.sharers=Array.isArray(rc.sharers)?rc.sharers.slice():null; c.tS=rc.tS; ch=true; }
-  c.views=c.views||{};
+  c.views=c.views||{}; c.rateSets=c.rateSets||{};
+  Object.keys(rc.rateSets||{}).forEach(k=>{ const a=rc.rateSets[k], b=c.rateSets[k]; if(a&&(!b||(a.t||0)>(b.t||0))){ c.rateSets[k]=a; ch=true; } });   // 各月的點數：逐月看修改時間
   Object.keys(rc.views||{}).forEach(n=>{ const a=rc.views[n], b=c.views[n]; if(a&&(!b||(a.t||0)>(b.t||0))){ c.views[n]=a; ch=true; } });
   if(rc.url&&((rc.tU||0)>(c.tU||0)||!sheetUrl())){
     if(rc.url!==window.COMMISSION_SHEET_URL) c.url=rc.url; else delete c.url;
@@ -1230,13 +1255,14 @@ let _pubBusy=false,_pubAgain=false;
 const viewUrl=tok=>(location.protocol==='file:'?PUBLIC_URL:location.origin+location.pathname.replace(/[^/]*$/,''))+'me.html?openExternalBrowser=1#me='+tok;
 const npRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={promo:Number(r.promo)||0,pool:Number(r.pool)||0}; }); return o; };
 function viewBlob(name){
-  const live=liveCfg(), months={};
+  const live=cfgFor(''), months={}, sets={};
+  Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=npRates(ratesFor(k)); });
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm) return;
     const m={}, rec=pm.paid&&pm.paid['n|'+name];
     if(pm.cfg){ m.rates=npRates(pm.cfg.products); m.n=pm.cfg.sharers.length; m.inPool=pm.cfg.sharers.includes(name); }
     if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
     if(Object.keys(m).length) months[k]=m; });
-  return {v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),n:live.sharers.length,inPool:live.sharers.includes(name),months};
+  return {v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),sets,n:live.sharers.length,inPool:live.sharers.includes(name),months};
 }
 async function publishViews(){
   if(VIEW||!window.crypto||!crypto.subtle) return;
@@ -1307,6 +1333,7 @@ function applyView(b){
   const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]={doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0}; }); return o; };
   const pool=(n,inPool)=>{ const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
   state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
+  state.cfg.rateSets={}; Object.keys(b.sets||{}).forEach(k=>{ state.cfg.rateSets[k]={r:full(b.sets[k]),t:0}; });
   state.pay={};
   Object.keys(b.months||{}).forEach(k=>{ const m=b.months[k], pm=state.pay[k]={paid:{}};
     if(m.rates) pm.cfg={products:full(m.rates),sharers:pool(m.n,m.inPool)};
@@ -1412,14 +1439,17 @@ function act(a,t,ev){
     if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done,()=>prompt('請複製這條連結：',url));
     else prompt('請複製這條連結：',url);
   }
-  else if(a==='month'){ cur=k; _mePicked=true; yearSel=null; renderAll(); window.scrollTo({top:0}); }
+  else if(a==='month'){
+    if(draftDirty()&&k!==cur){ if(!confirm('每件點數有還沒儲存的修改，換月份會放棄這些修改。\n要換月份嗎？')) return; rateDraft={}; }
+    cur=k; _mePicked=true; yearSel=null; renderAll(); window.scrollTo({top:0});
+  }
   else if(a==='pay'||a==='repay') doPay(k);
   else if(a==='unpay') doUnpay(k);
   else if(a==='payall') doPayAll(t.dataset.role);
   else if(a==='date'){ const r=state.pay[cur]&&state.pay[cur].paid[k]; if(r&&!r.del&&t.value){ r.at=t.value; r.t=Date.now(); saveState(); renderYear(); } }
   else if(a==='resnap'){
     if(!confirm(`${keyLabel(cur)}改用現在的設定重算？\n已經確認的點數不會變，若新算法的點數不同，會在該列提醒差額。`)) return;
-    state.pay[cur].cfg=clone(liveCfg()); state.pay[cur].cfgT=Date.now(); saveState(); renderAll();
+    state.pay[cur].cfg=clone(cfgFor(cur)); state.pay[cur].cfgT=Date.now(); saveState(); renderAll();
   }
   else if(a==='detail') showDetail(k);
   else if(a==='close') $('mask').classList.remove('on');
@@ -1429,25 +1459,31 @@ function act(a,t,ev){
   else if(a==='rate'){
     // 只記進草稿，按「儲存」才生效；改回原本的數字＝沒有修改
     const pid=t.dataset.pid, f=t.dataset.f, d=rateDraft[pid]||(rateDraft[pid]={});
-    if(t.value!==''&&Number(t.value)===liveRates()[pid][f]) delete d[f]; else d[f]=t.value;
+    if(t.value!==''&&Number(t.value)===monthRates(cur)[pid][f]) delete d[f]; else d[f]=t.value;
     if(!Object.keys(d).length) delete rateDraft[pid];
     t.classList.toggle('chg',!!(rateDraft[pid]&&f in rateDraft[pid]));
     refreshCfgRow(pid); renderRateSave();
   }
   else if(a==='rate-save'){
-    if(!draftDirty()) return;
-    Object.keys(rateDraft).forEach(pid=>{ const rt=state.cfg.rates[pid]||(state.cfg.rates[pid]={});
-      Object.keys(rateDraft[pid]).forEach(f=>{ const v=rateDraft[pid][f]; if(v==='') delete rt[f]; else rt[f]=Math.max(0,Number(v)||0); }); });   // 清空＝回到預設值；負數歸 0
-    rateDraft={}; state.cfg.tR=Date.now(); saveState();
+    if(!draftDirty()||!cur) return;
+    // 存成「這個月的一組」：從這個月起適用，之後沒另外改的月份沿用它；之前的月份不動
+    const full=draftRates(), now=Date.now(), pm=state.pay[cur];
+    state.cfg.rateSets[cur]={r:clone(full),t:now};
+    if(pm&&pm.cfg){ pm.cfg.products=clone(full); pm.cfgT=now; }   // 這個月已有確認紀錄（點數固定在快照裡）→ 快照一起改，已確認的人會顯示差額
+    rateDraft={}; saveState();
     if(document.activeElement&&document.activeElement.blur) document.activeElement.blur();
     renderAll();
   }
+  else if(a==='rate-inherit'){
+    const rs=state.cfg.rateSets; if(!cur||!rs[cur]||rs[cur].del) return;
+    if(!confirm(`${keyLabel(cur)}不要自己的設定，改回沿用前面的？\n（之後沒有另外修改的月份也會跟著變）`)) return;
+    const now=Date.now(), pm=state.pay[cur];
+    rs[cur]={del:1,t:now}; rateDraft={};
+    if(pm&&pm.cfg){ pm.cfg.products=clone(ratesFor(cur)); pm.cfgT=now; }
+    saveState(); renderAll();
+  }
   else if(a==='rate-cancel'){
     rateDraft={}; if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); renderAll();
-  }
-  else if(a==='rate-reset'){
-    if(!confirm('把每件點數全部恢復成這台電腦的預設值？')) return;
-    rateDraft={}; state.cfg.rates={}; state.cfg.tR=Date.now(); saveState(); renderAll();
   }
   else if(a==='sharer-add'){
     const n=normName($('sharer-new').value); if(!n) return;
