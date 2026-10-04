@@ -220,7 +220,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.04m';
+const APP_VER='2026.10.04n';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -255,18 +255,19 @@ const VIEW=(()=>{
 let _notice=null; if(!VIEW){ try{ _notice=localStorage.getItem(LS_NOTICE); }catch(e){} }
 let viewInfo=null, viewErr=null, _mePicked=false;   // viewInfo＝解開的個人資料；viewErr＝'gone' 連結失效｜'net' 連不上
 const PRODUCTS=[
-  {id:'dressing',name:'傷口敷料',  re:/敷料/},
-  {id:'scar',    name:'除疤凝膠',  re:/疤/},
-  {id:'glue',    name:'黏著劑',    re:/黏著|黏合/},
-  {id:'repair',  name:'傷口修護液',re:/修護/},
+  {id:'dressing',name:'水性',  re:/敷料/},
+  {id:'scar',    name:'除疤',  re:/疤/},
+  {id:'glue',    name:'黏著',  re:/黏著|黏合/},
+  {id:'repair',  name:'修護液',re:/修護/},
 ];
 // 每一件的點數怎麼分：doc 醫師、promo 主要、pool 放進專師平分池、fund 科部（不屬於個人）；
 // price＝每件的品項點數，只用來算「品項總點數」，不影響每個人的點數
 const FIELDS=['doc','promo','pool','fund','price'];
 const ZERO={doc:0,promo:0,pool:0,fund:0,price:0};
-// 畫面偏好（哪幾張卡收合）：只記在這台裝置，不同步
+// 哪幾張卡展開著
 const LS_UI='erCommission_ui2';
-let ui={}; try{ ui=JSON.parse(localStorage.getItem(LS_UI)||'{}')||{}; }catch(e){}
+let ui={};   // 只在這次開啟期間記住（重畫時不會彈回去）；不存到裝置上，所以每次打開 App 都是全部收起來
+try{ localStorage.removeItem(LS_UI); }catch(e){}   // 清掉舊版存過的展開紀錄
 const isOpen=sec=>ui[sec]===true;   // 預設全部收合；使用者自己展開過的才記成展開
 const shiftKey=(k,d)=>{ let [y,m]=k.split('-').map(Number); m+=d; while(m<1){ m+=12; y--; } while(m>12){ m-=12; y++; } return `${y}-${pad(m)}`; };
 const FUND_PK='f|科部', OLD_FUND_PK='f|\u79d1\u57fa\u91d1';   // OLD＝改名前存的鍵，讀到就搬成新的
@@ -1511,7 +1512,7 @@ document.addEventListener('input',e=>{ const t=e.target; if(t.dataset&&t.dataset
 // 卡片收合／展開（toggle 不會冒泡，要用 capture）→ 記在這台裝置
 document.addEventListener('toggle',e=>{ const d=e.target;
   if(!d.dataset||!d.dataset.sec||isOpen(d.dataset.sec)===d.open) return;   // 和已記的狀態相同（含剛畫出來時瀏覽器自動發的事件）就不用記
-  ui[d.dataset.sec]=d.open; try{ localStorage.setItem(LS_UI,JSON.stringify(ui)); }catch(_){}
+  ui[d.dataset.sec]=d.open;
 },true);
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape') $('mask').classList.remove('on');
@@ -1548,7 +1549,6 @@ if(VIEW){
   setInterval(()=>{ if(document.visibilityState==='visible'){ loadView(); refresh(true); } },60*1000);
 }else{
   if(!sync&&applyDefaults()) saveState(true);
-  if(isOpen('rates')) $('card-rates').open=true;
   renderAll();
   renderSync();
   refresh(true);
