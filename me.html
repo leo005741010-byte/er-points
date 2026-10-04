@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>我的點數</title>
+</head>
+<body>
+<script>
+// 個人查看專用入口。載入和 index.html 同一份程式，但先設 VIEW_ONLY：只能看自己的點數，
+// 不會出現管理者的同步密碼畫面；沒帶到個人代碼時只會請他貼上主任給的連結。
+fetch('index.html',{cache:'no-store'}).then(function(r){ if(!r.ok) throw 0; return r.text(); }).then(function(t){
+  t=t.replace('<head>','<head><script>window.VIEW_ONLY=true<\/script>');
+  document.open(); document.write(t); document.close();
+}).catch(function(){ document.body.textContent='載入失敗，請確認網路後重新整理。'; });
+</script>
+</body>
+</html>

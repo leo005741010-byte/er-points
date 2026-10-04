@@ -1,0 +1,6 @@
+# 本機設定檔（試算表網址與預設值）：只留在本機，不可上傳
+sheet-config.js
+_test.html
+*.bak
+desktop.ini
+Thumbs.db

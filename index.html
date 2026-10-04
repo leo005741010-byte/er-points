@@ -1,0 +1,1513 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>急診點數</title>
+<script>
+// iPhone 的主畫面 App 有自己獨立的儲存空間，記不住個人查看連結；所以個人連結（#me=…）在 iPhone 上不掛 manifest，
+// 「加入主畫面」存下來的就會是含 # 的完整網址（有 manifest 時 iOS 只存 start_url，圖示打開會變成空白的首次設定畫面）。
+// 其他情況（主任自己用、Android）照常掛 manifest，才能安裝成獨立視窗的 App。
+// window.VIEW_ONLY＝這一頁是從 me.html（個人查看專用入口）載進來的，用另一份 manifest（start_url 指回 me.html）。
+(function(){
+  var ios=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  var me=window.VIEW_ONLY||/[#&]me=[A-Za-z0-9_-]{64}/.test(location.hash);
+  if(ios&&me) return;
+  document.write('<link rel="manifest" href="'+(window.VIEW_ONLY?'manifest-me.json':'manifest.json')+'">');
+})();
+</script>
+<meta name="theme-color" content="#1a4a7a">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="急診點數">
+<script>
+// PWA：只在正式網站註冊 Service Worker（本機 file:// 與 localhost 測試不註冊，免得測到快取的舊版）
+if('serviceWorker' in navigator && location.protocol==='https:'){
+  const had=!!navigator.serviceWorker.controller; let reloading=false;
+  // 新版 Service Worker 接手時自動重新整理（第一次安裝不用）
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(!had||reloading) return; reloading=true; location.reload(); });
+  window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').then(r=>r.update()).catch(()=>{}); });
+}
+</script>
+<style>
+:root{--navy:#1a4a7a;--navy-dark:#12355a;--bg:#f3f6fa;--card:#fff;--line:#dfe6ee;--txt:#1f2d3d;--mut:#6b7a8c;
+  --ok:#1f8a4c;--okbg:#e6f5ec;--warn:#a85800;--warnbg:#fff4e0;--bad:#c0392b;--badbg:#fdecea}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Microsoft JhengHei","PingFang TC","Noto Sans TC",system-ui,sans-serif;background:var(--bg);color:var(--txt);font-size:15px;line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding:0 16px}
+header.top{background:var(--navy);color:#fff;position:sticky;top:0;z-index:20;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+header.top .wrap{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-top:10px;padding-bottom:10px}
+header.top h1{font-size:19px;margin:0;font-weight:700;letter-spacing:.5px}
+header.top h1 .sub{font-size:12.5px;font-weight:400;opacity:.75;margin-left:8px}
+.top-r{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.status{font-size:12.5px;opacity:.9}
+main{padding-top:16px;padding-bottom:60px}
+.btn{font:inherit;font-size:13.5px;border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:7px;padding:6px 14px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--navy-dark)}
+.btn.outline{background:#fff;color:var(--navy)}
+.btn.outline:hover{background:#eef3f9}
+.btn.light{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.45)}
+.btn.light:hover{background:rgba(255,255,255,.26)}
+.btn.mini{font-size:12.5px;padding:3px 10px;border-radius:6px}
+.btn.ghost{background:transparent;color:var(--mut);border-color:var(--line)}
+.btn.ghost:hover{background:#f1f4f8;color:var(--txt)}
+.btn:disabled{opacity:.5;cursor:default}
+.months{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.mchip{font:inherit;font-size:14px;border:1px solid var(--line);background:#fff;color:var(--txt);border-radius:999px;padding:5px 14px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.mchip.on{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:700}
+.mchip i{width:9px;height:9px;border-radius:50%;display:inline-block;background:#c5ced9}
+.mchip i.done{background:#2eb872}.mchip i.part{background:#f2a541}.mchip i.none{background:#e2574c}
+.legend{font-size:12px;color:var(--mut);display:flex;gap:12px;align-items:center;margin-left:6px}
+.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+.card>h2{font-size:16.5px;margin:0 0 4px;color:var(--navy-dark);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card>h2 .r{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.card .hint{font-size:12.5px;color:var(--mut);margin:2px 0 10px}
+details.card>summary{cursor:pointer;font-weight:700;color:var(--navy-dark);font-size:15.5px}
+details.card[open]>summary{margin-bottom:12px}
+.mhead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:4px 0 12px}
+.mhead h2{font-size:22px;margin:0;color:var(--navy-dark)}
+.mhead .r{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
+.tile{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.tile .l{font-size:12.5px;color:var(--mut)}
+.tile .v{font-size:25px;font-weight:700;color:var(--navy-dark);font-variant-numeric:tabular-nums;line-height:1.25}
+.tile .s{font-size:12.5px;color:var(--mut)}
+.tile.ok .v{color:var(--ok)}.tile.due .v{color:var(--bad)}
+.tiles.sales{grid-template-columns:repeat(2,minmax(0,1fr))}
+.tile.big{background:#e9f1fb;border-color:#d3e3f6;text-align:center;padding:14px}
+.tile.big .v{font-size:32px}
+.tile.big .l{font-size:14px;color:var(--navy-dark);font-weight:600}
+.tile.big .s .up{color:var(--ok);font-weight:700}.tile.big .s .dn{color:var(--warn);font-weight:700}
+details.sec>summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:16.5px;list-style:none}
+details.sec>summary::-webkit-details-marker{display:none}
+details.sec>summary::before{content:'▸';color:var(--mut);font-size:15px;transition:transform .15s}
+details.sec[open]>summary::before{transform:rotate(90deg)}
+details.sec>summary .sum-amt{font-variant-numeric:tabular-nums;color:var(--navy)}
+details.sec>summary .tag{margin-left:auto}
+.sec-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.sec-head .hint{margin:0;flex:1 1 240px}
+.bar{height:6px;border-radius:3px;background:#e8edf3;margin-top:6px;overflow:hidden}
+.bar>span{display:block;height:100%;background:#2eb872}
+.note{border-radius:9px;padding:9px 13px;font-size:13.5px;margin-bottom:10px}
+.note.warn{background:var(--warnbg);color:var(--warn);border:1px solid #f3d9a4}
+.note.bad{background:var(--badbg);color:var(--bad);border:1px solid #f1b9b3}
+.note.info{background:#eaf2fb;color:var(--navy-dark);border:1px solid #c9dcf0}
+.note ul{margin:0;padding-left:20px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{background:#f4f7fb;color:var(--navy-dark);font-weight:700;font-size:13px}
+th.l,td.l{text-align:left}
+td.n{font-variant-numeric:tabular-nums}
+td.amt{font-weight:700;font-variant-numeric:tabular-nums}
+td.z{color:#b8c1cc}
+tr.tot td{font-weight:700;background:#f4f7fb;border-top:2px solid var(--line)}
+tr.bad td{background:var(--badbg)}
+tr.paid td.amt{color:var(--ok)}
+.nm{font:inherit;background:none;border:none;padding:0;color:var(--navy);cursor:pointer;font-weight:600;border-bottom:1px dashed #9db6d1}
+.nm:hover{color:var(--navy-dark);border-bottom-style:solid}
+.tag{display:inline-block;font-size:12.5px;border-radius:6px;padding:2px 8px;font-weight:700}
+.tag.ok{background:var(--okbg);color:var(--ok)}
+.tag.no{background:var(--badbg);color:var(--bad)}
+.mut{color:var(--mut)}
+.pdate{font:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;color:var(--txt);width:128px}
+.diff{font-size:12.5px;color:var(--warn);margin-top:3px;white-space:normal}
+td.st{text-align:left;min-width:250px}
+.sub2{font-size:12.5px;color:var(--mut);margin-top:8px}
+#rates-view input[type=number]{width:104px;font-size:15px;font-weight:700;color:var(--navy-dark);border-color:#8fb1d6;background:#fbfdff}
+#rates-view td,#rates-view th{padding-top:6px;padding-bottom:6px}
+#rates-note .note{margin:10px 0 0}
+h3{font-size:14px;color:var(--navy-dark);margin:18px 0 8px;border-left:3px solid var(--navy);padding-left:8px}
+h3:first-child{margin-top:0}
+input[type=number],input[type=text],input[type=url]{font:inherit;font-size:14px;border:1px solid #c7d2df;border-radius:6px;padding:4px 8px}
+input[type=number]{width:92px;text-align:right}
+input:focus{outline:2px solid #9cc0e6;outline-offset:0}
+.chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.chip{background:#eaf2fb;border:1px solid #c9dcf0;border-radius:999px;padding:3px 6px 3px 12px;font-size:14px;display:flex;align-items:center;gap:4px}
+.chip button{font:inherit;border:none;background:none;color:var(--mut);cursor:pointer;font-size:15px;line-height:1;padding:2px 5px;border-radius:50%}
+.chip button:hover{background:#d5e4f4;color:var(--bad)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.ycell{font-variant-numeric:tabular-nums}
+.ycell.p{color:var(--ok)}.ycell.u{color:var(--bad);font-weight:700}.ycell.w{color:var(--warn);font-weight:700}
+.mask{position:fixed;inset:0;background:rgba(18,53,90,.45);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:40px 12px;overflow:auto}
+.mask.on{display:flex}
+.dlg{background:#fff;border-radius:14px;max-width:820px;width:100%;padding:18px 20px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+.dlg h2{margin:0 0 4px;font-size:18px;color:var(--navy-dark);display:flex;align-items:center}
+.dlg h2 .btn{margin-left:auto}
+.empty{text-align:center;color:var(--mut);padding:40px 10px}
+#sync-st{cursor:pointer;border:1px solid rgba(255,255,255,.4);border-radius:999px;padding:1px 10px;white-space:nowrap}
+#sync-st.bad{background:#b3261e;border-color:#b3261e;opacity:1}
+.setup{max-width:560px;margin:0 auto}
+.setup h2{font-size:18px;color:var(--navy-dark);margin:0 0 6px}
+input[type=password]{font:inherit;font-size:15px;border:1px solid #c7d2df;border-radius:6px;padding:6px 10px}
+pre.rule{background:#0f2238;color:#e8f0fa;border-radius:8px;padding:10px 12px;font-size:12.5px;overflow:auto;white-space:pre;user-select:all;margin:8px 0 0}
+#print-area{display:none}
+@media (max-width:640px){
+  .card{padding:12px}.tile .v{font-size:21px}th,td{padding:6px 7px}
+  header.top{position:static}
+  header.top h1 .sub{display:none}
+  /* 手機：醫師／專師表改成一人一塊（姓名＋點數／件數／確認按鈕），不用左右捲 */
+  table.ppl,table.ppl tbody{display:block}
+  table.ppl thead{display:none}
+  table.ppl tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:10px 2px;border-bottom:1px solid var(--line)}
+  table.ppl td{display:block;border:none;padding:0;text-align:left;white-space:normal;background:none!important}
+  table.ppl td.nmc{order:1;flex:1 1 auto;font-size:16px}
+  table.ppl td.amt{order:2;margin-left:auto;font-size:16px}
+  table.ppl tr::before{content:'';order:3;flex-basis:100%;height:0}
+  table.ppl td.q,table.ppl td.sub{order:4;font-size:12.5px;color:var(--mut)}
+  table.ppl td.q::before,table.ppl td.sub::before{content:attr(data-l) ' '}
+  table.ppl td.z{display:none}
+  table.ppl tr::after{content:'';order:5;flex-basis:100%;height:0}
+  table.ppl td.st{order:6;min-width:0;flex-basis:100%;margin-top:5px}
+  table.ppl td.st:empty{display:none}
+  table.ppl tr.tot{background:#f4f7fb;border-radius:8px;padding:10px 8px;border-bottom:none}
+  table.ppl tr.bad{background:var(--badbg)}
+  .pdate{width:120px}
+}
+@media print{
+  @page{size:A4 portrait;margin:14mm}
+  body{background:#fff;font-size:12pt}
+  body>*:not(#print-area){display:none!important}
+  #print-area{display:block}
+  #print-area h1{font-size:17pt;text-align:center;margin:0 0 2mm}
+  #print-area .ps{text-align:center;font-size:11pt;margin-bottom:5mm}
+  #print-area h2{font-size:13pt;margin:5mm 0 2mm}
+  #print-area table{font-size:11pt}
+  #print-area th,#print-area td{border:1px solid #333;padding:2mm 2.5mm}
+  #print-area th{background:#eee!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #print-area td.sig{width:34mm}
+  #print-area .pf{font-size:10pt;margin-top:4mm;line-height:1.6}
+  #print-area .sign{display:flex;justify-content:flex-end;gap:22mm;margin-top:12mm;font-size:12pt}
+}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <h1>急診點數<span class="sub">每月統計・確認註記</span></h1>
+  <div class="top-r"><span class="status" id="status"></span><span class="status" id="sync-st" data-act="goto-sync"></span>
+    <button class="btn light" id="btn-refresh" data-act="refresh">🔄 從試算表更新</button></div>
+</div></header>
+
+<main class="wrap">
+  <div id="alerts"></div>
+  <div class="months" id="months"></div>
+  <div id="month-top"></div>
+  <details class="card" id="card-rates" data-sec="rates"><summary>✏ 每件點數（可直接修改）</summary><div id="rates-view"></div></details>
+  <div id="month-view"></div>
+  <details class="card" id="card-year"><summary>年度總覽：每個人每個月的點數與確認狀況</summary><div id="year-view"></div></details>
+  <details class="card" id="card-cfg"><summary>⚙ 其他設定：雲端同步／試算表網址／備份</summary><div id="cfg-view"></div></details>
+</main>
+<div class="mask" id="mask"><div class="dlg" id="dlg"></div></div>
+<div id="print-area"></div>
+
+<!-- sheet-config.js（試算表網址＋預設點數）只存在本機、不上傳；網站版沒有這個檔，靠加密的雲端同步取得 -->
+<script>
+if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) document.write('<script src="sheet-config.js"><\/script>');
+</script>
+<script>
+'use strict';
+// ============================================================
+// 急診點數：讀 Google 試算表逐筆紀錄 → 依每件點數算出每月每人的點數 → 人工註記已確認。
+// 用詞規則：畫面、列印、匯出、註解都只講「點數」與「確認」，其他敏感字眼一律不用。
+// 資料存在各裝置的 localStorage；要跨裝置就開「雲端同步」，上傳前先用同步密碼加密（見下方「雲端同步」）。
+// 本檔會公開在網站上，所以不含任何姓名、點數、試算表網址：
+//   ・姓名來自試算表；試算表網址與預設點數放本機的 sheet-config.js（不上傳）或由雲端同步取得。
+// 只下載 序／日期／品項數量／專師／醫師 欄，病歷號與病人姓名不下載、不儲存。
+// ============================================================
+const LS='erCommission_v1';
+const APP_VER='2026.10.04j';
+const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
+// ---- 個人查看模式 ----
+// 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
+// 不載入也不寫入主任的資料，而且**永遠不會出現主任的同步密碼畫面**——沒帶到個人代碼時只會請他貼連結。
+// 2026-10-04 出過事：個人連結原本掛在 index.html 上，iPhone 加到主畫面後代碼沒帶到，畫面退回主任的首次設定，
+// 專師輸入了科內都知道的密碼就看到全部人的資料。所以 index.html 不再兼做個人查看，帶著代碼來的一律轉去 me.html。
+// 代碼＝48 個隨機位元組：前 16 個是雲端節點代號、後 32 個是解密金鑰；# 後面的內容不會送到伺服器。
+const LS_ME='erCommission_me', LS_NOTICE='erCommission_notice';
+const VIEW_ONLY=!!window.VIEW_ONLY;
+function parseViewTok(tok){
+  try{
+    const b=atob(String(tok).replace(/-/g,'+').replace(/_/g,'/')); if(b.length!==48) return null;
+    const u=Uint8Array.from(b,ch=>ch.charCodeAt(0));
+    return {tok,id:[...u.subarray(0,16)].map(x=>x.toString(16).padStart(2,'0')).join(''),key:btoa(String.fromCharCode.apply(null,u.subarray(16)))};
+  }catch(e){ return null; }
+}
+// VIEW：null＝主任模式；{id,key,tok}＝個人查看；{none:true}＝個人查看入口但還沒有代碼（請他貼連結）
+const VIEW=(()=>{
+  const m=location.hash.match(/[#&]me=([A-Za-z0-9_-]{64})/);
+  let tok=m&&m[1], own=false, saved=null;
+  try{ own=!!(localStorage.getItem('erCommission_v1')||localStorage.getItem('erCommission_sync')); saved=localStorage.getItem(LS_ME); }catch(e){}
+  if(VIEW_ONLY){
+    try{ if(tok) localStorage.setItem(LS_ME,tok); }catch(e){}
+    return (tok||saved?parseViewTok(tok||saved):null)||{none:true};
+  }
+  if(location.protocol==='file:') return tok?parseViewTok(tok):null;   // 本機檔沒辦法用 me.html，維持舊做法（只有主任自己會這樣開）
+  if(tok||(saved&&!own)){ location.replace('me.html'+(tok?'#me='+tok:'')); return {none:true}; }
+  return null;
+})();
+let _notice=null; if(!VIEW){ try{ _notice=localStorage.getItem(LS_NOTICE); }catch(e){} }
+let viewInfo=null, viewErr=null, _mePicked=false;   // viewInfo＝解開的個人資料；viewErr＝'gone' 連結失效｜'net' 連不上
+const PRODUCTS=[
+  {id:'dressing',name:'傷口敷料',  re:/敷料/},
+  {id:'scar',    name:'除疤凝膠',  re:/疤/},
+  {id:'glue',    name:'黏著劑',    re:/黏著|黏合/},
+  {id:'repair',  name:'傷口修護液',re:/修護/},
+];
+// 每一件的點數怎麼分：doc 醫師、promo 推廣的專師、pool 放進專師平分池、fund 科部（不屬於個人）；
+// price＝每件的品項點數，只用來算「品項總點數」，不影響每個人的點數
+const FIELDS=['doc','promo','pool','fund','price'];
+const ZERO={doc:0,promo:0,pool:0,fund:0,price:0};
+// 畫面偏好（哪幾張卡收合）：只記在這台裝置，不同步
+const LS_UI='erCommission_ui2';
+let ui={}; try{ ui=JSON.parse(localStorage.getItem(LS_UI)||'{}')||{}; }catch(e){}
+const isOpen=sec=>ui[sec]===true;   // 預設全部收合；使用者自己展開過的才記成展開
+const shiftKey=(k,d)=>{ let [y,m]=k.split('-').map(Number); m+=d; while(m<1){ m+=12; y--; } while(m>12){ m-=12; y++; } return `${y}-${pad(m)}`; };
+const FUND_PK='f|科部', OLD_FUND_PK='f|\u79d1\u57fa\u91d1';   // OLD＝改名前存的鍵，讀到就搬成新的
+function moveOldFundKey(paid){ const o=paid[OLD_FUND_PK]; if(!o) return; if(!paid[FUND_PK]||(o.t||0)>(paid[FUND_PK].t||0)) paid[FUND_PK]=o; delete paid[OLD_FUND_PK]; }
+const defRate=pid=>(window.COMMISSION_DEFAULT_RATES||{})[pid]||ZERO;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmt=n=>Math.round(n||0).toLocaleString('en-US');
+const pad=n=>String(n).padStart(2,'0');
+const clone=o=>JSON.parse(JSON.stringify(o));
+const today=()=>{ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const keyLabel=k=>{ const [y,m]=k.split('-').map(Number); return `${y}年${m}月`; };
+const shortDate=s=>{ const m=String(s||'').match(/^\d{4}-(\d{2})-(\d{2})$/); return m?`${+m[1]}/${+m[2]}`:''; };
+const normName=v=>String(v==null?'':v).replace(/\s+/g,'');
+const sumVals=o=>Object.values(o||{}).reduce((a,b)=>a+b,0);
+
+function loadState(){
+  let s=null; try{ s=JSON.parse(localStorage.getItem(LS)||'null'); }catch(e){}
+  return normState(s||{});
+}
+function normState(s){
+  s.cfg=s.cfg||{}; s.cfg.rates=s.cfg.rates||{};
+  s.cfg.views=s.cfg.views||{};   // 個人查看連結 {姓名:{tok,t}｜{del:1,t}}
+  if(!Array.isArray(s.cfg.sharers)) s.cfg.sharers=null;   // null＝跟著試算表統計頁的專師名單
+  s.data=s.data||{}; s.data.months=s.data.months||{}; s.data.extra=s.data.extra||{};
+  s.data.roster=s.data.roster||{}; s.data.roster.np=s.data.roster.np||[]; s.data.roster.doc=s.data.roster.doc||[];
+  // {'115-09':{cfg:{products,sharers}（第一次註記時的設定快照）,cfgT,paid:{'d|姓名':{amt,at,t}｜{del:1,t}}}}
+  // t／cfgT＝最後修改時間（毫秒），跨裝置合併時較新的為準；取消註記留 {del:1,t} 才能同步到別台。舊資料補 1。
+  s.pay=s.pay||{};
+  Object.keys(s.pay).forEach(k=>{ const pm=s.pay[k]||(s.pay[k]={}); pm.paid=pm.paid||{};
+    if(pm.cfg&&!pm.cfgT) pm.cfgT=1;
+    Object.keys(pm.paid).forEach(pk=>{ if(!pm.paid[pk].t) pm.paid[pk].t=1; });
+    moveOldFundKey(pm.paid); });
+  return s;
+}
+// local=true：只是試算表快取或雲端合併結果，不用再推上雲端
+function saveState(local){
+  if(VIEW) return true;   // 個人查看模式什麼都不存
+  try{ localStorage.setItem(LS,JSON.stringify(state)); }
+  catch(e){ alert('資料寫入失敗（'+(e&&e.message||e)+'）。請先到最下方「其他設定」匯出備份。'); return false; }
+  if(!local) schedulePush();
+  return true;
+}
+let state=VIEW?normState({}):loadState();
+let cur=null;        // 目前檢視的月份 key（民國年-月，例 115-09）
+let yearSel=null;
+let busy=false, fail=null, delta=null;
+
+// ---------- 設定 ----------
+function sheetUrl(){ return state.cfg.url||window.COMMISSION_SHEET_URL||''; }
+function productList(){
+  return PRODUCTS.map(p=>({id:p.id,name:p.name}))
+    .concat(Object.keys(state.data.extra).map(l=>({id:'x:'+l,name:l})));
+}
+const prodName=pid=>{ const p=PRODUCTS.find(p=>p.id===pid); return p?p.name:String(pid).replace(/^x:/,''); };
+function liveRates(){
+  const o={};
+  productList().forEach(p=>{ const u=state.cfg.rates[p.id]||{}, d=defRate(p.id); o[p.id]={};
+    FIELDS.forEach(f=>{ o[p.id][f]=(u[f]!=null&&u[f]!=='')?Math.max(0,Number(u[f])||0):(Number(d[f])||0); }); });
+  return o;
+}
+function liveSharers(){ return (state.cfg.sharers||state.data.roster.np||[]).slice(); }
+function liveCfg(){ return {products:liveRates(),sharers:liveSharers()}; }
+// 有確認紀錄的月份沿用當時的設定（之後調整點數／名單，不會回頭改到已確認過的月份）
+function monthCfg(key){ const pm=state.pay[key]; return (pm&&pm.cfg)||liveCfg(); }
+function paidOf(key){   // 只回有效的確認紀錄（取消的 {del:1} 不算）
+  const p=(state.pay[key]&&state.pay[key].paid)||{}, o={};
+  Object.keys(p).forEach(k=>{ if(!p[k].del) o[k]=p[k]; });
+  return o;
+}
+// 這個月的快照設定和現行設定算出來的點數有沒有差（只是多了別的月份才有的新品項不算）
+function snapDiffers(key){
+  const pm=state.pay[key]; if(!pm||!pm.cfg) return false;
+  const sig=c=>JSON.stringify([people(c).map(p=>p.pk+'='+p.amt).sort(),Math.round(c.sales)]);   // 品項點數不同也算
+  return sig(calcMonth(key))!==sig(calcMonth(key,liveCfg()));
+}
+
+// ---------- 計算 ----------
+// 某份設定裡某品項的每件點數。科部、品項點數是後來才加的：舊的月份快照沒有這些欄時先跟著現行設定，
+// 等那個月下次有註記動作（ensureMonth）才寫進快照固定下來
+function rateOf(cfg,pid,live){
+  const r=cfg.products[pid]||ZERO, lv=((live||liveRates())[pid])||ZERO;
+  return {doc:Number(r.doc)||0,promo:Number(r.promo)||0,pool:Number(r.pool)||0,
+    fund:r.fund!=null?(Number(r.fund)||0):(lv.fund||0), price:r.price!=null?(Number(r.price)||0):(lv.price||0)};
+}
+function calcMonth(key,cfgOverride){
+  const md=state.data.months[key], cfg=cfgOverride||monthCfg(key), live=liveRates(), rc={};
+  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,fund:0,fundIt:{},vendor:0,units:0,sales:0,noPrice:{},zeroRate:{}};
+  c.rows.forEach(r=>Object.keys(r.it).forEach(pid=>{
+    const q=r.it[pid], rt=rc[pid]||(rc[pid]=rateOf(cfg,pid,live));
+    if(!cfg.products[pid]||!(rt.doc+rt.promo+rt.pool+rt.fund)) c.zeroRate[pid]=1;
+    c.prod[pid]=(c.prod[pid]||0)+q; c.units+=q;
+    c.sales+=q*rt.price; if(!rt.price) c.noPrice[pid]=1;
+    const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc;
+    const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=q*rt.promo;
+    c.pool+=q*rt.pool; c.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
+    if(rt.fund){ c.fund+=q*rt.fund; c.fundIt[pid]=(c.fundIt[pid]||0)+q; }
+  }));
+  // 平分池：整池除以名單人數，除不盡的零頭不計（列在提醒）
+  const N=cfg.sharers.length;
+  c.share=N?Math.floor(c.pool/N):0; c.poolLeft=c.pool-c.share*N;
+  cfg.sharers.forEach(nm=>{ (c.np[nm]||(c.np[nm]={it:{},promo:0,share:0})).share=c.share; });
+  return c;
+}
+// 這個月有紀錄的品項（依設定表的順序；設定表還沒有的新品項排最後）
+function monthPids(c){
+  const known=productList().map(p=>p.id);
+  return known.filter(pid=>c.prod[pid]).concat(Object.keys(c.prod).filter(pid=>!known.includes(pid)));
+}
+// 每人一列：role d=醫師 n=專師 f=科部（整個月一列，和個人一樣註記「已確認」）；沒填姓名的列不能確認（payable=false）
+function people(c){
+  const paid=paidOf(c.key), out=[], seen={};
+  Object.keys(c.doc).forEach(n=>{ const d=c.doc[n];
+    out.push({role:'d',name:n,pk:'d|'+n,it:d.it,promo:0,share:0,amt:Math.round(d.amt),payable:!!n}); });
+  Object.keys(c.np).forEach(n=>{ const p=c.np[n];
+    out.push({role:'n',name:n,pk:'n|'+n,it:p.it,promo:Math.round(p.promo),share:p.share,amt:Math.round(p.promo)+p.share,payable:!!n}); });
+  if(c.fund>0) out.push({role:'f',name:'科部',pk:FUND_PK,it:c.fundIt,promo:0,share:0,amt:Math.round(c.fund),payable:true});
+  out.forEach(p=>seen[p.pk]=1);
+  // 已註記確認、但現在試算表算不到的人（事後改了姓名／刪了列）仍要列出來
+  Object.keys(paid).forEach(pk=>{ if(!seen[pk]) out.push({role:pk[0],name:pk.slice(2),pk,it:{},promo:0,share:0,amt:0,payable:true}); });
+  out.forEach(p=>p.rec=paid[p.pk]||null);
+  return out.sort((a,b)=>(a.name==='')-(b.name==='')||b.amt-a.amt||a.name.localeCompare(b.name,'zh-Hant'));
+}
+function monthTotals(list){
+  const t={due:0,paid:0,unpaid:0,over:0,todo:0};
+  list.forEach(p=>{ if(!p.payable) return; t.due+=p.amt;
+    const got=p.rec?p.rec.amt:0; t.paid+=got;
+    if(p.amt>got){ t.unpaid+=p.amt-got; t.todo++; } else if(got>p.amt) t.over+=got-p.amt; });
+  t.state=!t.due&&!t.paid?'empty':t.todo===0?'done':t.paid>0?'part':'none';
+  return t;
+}
+function allKeys(){
+  return [...new Set([...Object.keys(state.data.months),
+    ...Object.keys(state.pay).filter(k=>Object.keys(paidOf(k)).length)])].sort();
+}
+function defaultKey(){
+  const ks=allKeys(); if(!ks.length) return null;
+  const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1);   // 每月處理上個月的
+  const prev=`${d.getFullYear()-1911}-${pad(d.getMonth()+1)}`;
+  return ks.includes(prev)?prev:ks[ks.length-1];
+}
+
+// ---------- 讀 Google 試算表（gviz JSONP；file:// 開啟時 fetch 會被 CORS 擋） ----------
+function sheetId(url){
+  const s=String(url||'').trim(), m=s.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]{20,})/);
+  return m?m[1]:(/^[a-zA-Z0-9_-]{30,}$/.test(s)?s:null);
+}
+function gviz(id,params,headers,timeoutMs){
+  return new Promise((resolve,reject)=>{
+    const cb='__gviz'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+    const s=document.createElement('script'); let done=false;
+    // 逾時後晚到的回應會呼叫已移除的 callback——留一個空函式接住
+    const fin=()=>{ done=true; clearTimeout(t); window[cb]=function(){}; s.remove(); };
+    const t=setTimeout(()=>{ if(!done){ fin(); reject(new Error('連線逾時')); } },timeoutMs||20000);
+    window[cb]=d=>{ if(done) return; fin();
+      if(d&&d.status==='error') reject(new Error((d.errors&&d.errors[0]&&(d.errors[0].detailed_message||d.errors[0].message))||'試算表回傳錯誤'));
+      else resolve(d); };
+    s.onerror=()=>{ if(!done){ fin(); reject(new Error('讀不到試算表（沒有網路，或試算表已改成不公開）')); } };
+    s.src=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json;responseHandler:${cb}&headers=${headers==null?1:headers}&${params}`;
+    document.head.appendChild(s);
+  });
+}
+const gcell=c=>c==null?null:(c.v!=null?c.v:(c.f!=null?c.f:null));
+const normLabel=l=>String(l==null?'':l).replace(/\s+/g,'');
+function classify(label){
+  const s=normLabel(label); if(!s) return null;
+  if(/^(序|序號|編號)$/.test(s)) return {kind:'seq'};
+  if(/日期/.test(s)) return {kind:'date'};
+  if(/病歷|姓名|身分/.test(s)) return {kind:'phi'};        // 病人個資欄：不下載
+  if(/專師|專科護理|^NP$/i.test(s)) return {kind:'np'};
+  if(/醫師/.test(s)) return {kind:'doc'};
+  const p=PRODUCTS.find(p=>p.re.test(s)); if(p) return {kind:'prod',pid:p.id};
+  if(/^(備註|說明|電話|床|科別|統計|合計)/.test(s)) return {kind:'skip'};
+  return {kind:'maybe',pid:'x:'+s,label:s};   // 不認得的欄：確定是數字欄才當新品項
+}
+function qty(v){
+  if(v==null||v==='') return 0;
+  if(typeof v==='number') return isFinite(v)&&v>0?v:0;
+  const s=String(v).trim();
+  if(/^\d+(\.\d+)?$/.test(s)) return Number(s);
+  return /^[vV✓✔○●]$/.test(s)?1:0;
+}
+// 回傳 {y,m,d}；認得 gviz 的 Date(2026,8,3)、Excel 序號、2026/9/3、115/9/3、9/3
+function parseDate(v){
+  if(v==null||v==='') return null;
+  if(v instanceof Date) return isNaN(v)?null:{y:v.getFullYear(),m:v.getMonth()+1,d:v.getDate()};
+  if(typeof v==='number'){
+    if(v>20000&&v<80000){ const d=new Date(Math.round((v-25569)*86400000)); return {y:d.getUTCFullYear(),m:d.getUTCMonth()+1,d:d.getUTCDate()}; }
+    return null;
+  }
+  const s=String(v).trim(); let m;
+  if((m=s.match(/^Date\((\d+),(\d+),(\d+)/))) return {y:+m[1],m:+m[2]+1,d:+m[3]};
+  if((m=s.match(/^(\d{2,4})\s*[\/\-.年]\s*(\d{1,2})\s*[\/\-.月]\s*(\d{1,2})/))){ let y=+m[1]; if(y<1000) y+=1911; return {y,m:+m[2],d:+m[3]}; }
+  if((m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})$/))) return {y:null,m:+m[1],d:+m[2]};
+  return null;
+}
+// rows: [{seq,date,cnt:{pid:n},np,doc}]；tabM＝分頁名稱的月份。月份以分頁為準、年份取該分頁多數列的年份
+function addRows(acc,rows,tabM){
+  const yrs={};
+  rows.forEach(r=>{ if(r.date&&r.date.y) yrs[r.date.y]=(yrs[r.date.y]||0)+1; });
+  const yTop=Number(Object.keys(yrs).sort((a,b)=>yrs[b]-yrs[a])[0])||new Date().getFullYear();
+  rows.forEach(r=>{
+    const tot=sumVals(r.cnt); if(tot<=0) return;
+    let m=r.date&&r.date.m;
+    if(tabM){ if(m&&m!==tabM) acc.mismatch++; m=tabM; }
+    if(!m){ acc.undated+=tot; return; }
+    const y=tabM?yTop:((r.date&&r.date.y)||yTop), key=`${y-1911}-${pad(m)}`;
+    (acc.months[key]||(acc.months[key]={rows:[]})).rows.push({
+      n:r.seq!=null&&r.seq!==''?r.seq:'', d:r.date&&r.date.d?`${r.date.m}/${r.date.d}`:'',
+      np:normName(r.np), doc:normName(r.doc), it:r.cnt});
+  });
+}
+function parseRoster(colA){
+  const out={np:[],doc:[]}; let i=colA.indexOf('專師');
+  if(i<0) return out;
+  for(i++;i<colA.length&&colA[i]&&colA[i]!=='醫師';i++) out.np.push(colA[i]);
+  if(colA[i]==='醫師') for(i++;i<colA.length&&colA[i];i++) out.doc.push(colA[i]);
+  return out;
+}
+async function sheetLayout(id){
+  const enc=encodeURIComponent, tabs=[...Array(12)].map((_,i)=>`${i+1}月`);
+  // 各分頁只抓表頭。注意：分頁不存在時 Google 不報錯、會默默回「第一個分頁」，抓資料後再用內容去重
+  const [heads,ros]=await Promise.all([
+    Promise.all(tabs.map(t=>gviz(id,`sheet=${enc(t)}&tq=${enc('limit 0')}`).catch(e=>({err:e})))),
+    gviz(id,`sheet=${enc('統計')}&tq=${enc('select A')}`,0).catch(()=>null),
+  ]);
+  // 任一分頁表頭讀失敗＝連線問題，整次作廢（略過失敗分頁照做的話，該月內容會被別的分頁的回聲頂替成別的月份）
+  const hErr=heads.find(h=>h.err); if(hErr) throw hErr.err;
+  const jobs=heads.map((h,i)=>{
+    const map={prod:[]}, pick=[], labels=[];
+    ((h.table&&h.table.cols)||[]).forEach(c=>{
+      const k=classify(c.label); if(!k) return;
+      let use=false;
+      if(k.kind==='seq'&&!map.seq){ map.seq=c.id; use=true; }
+      else if(k.kind==='date'&&!map.date){ map.date=c.id; use=true; }
+      else if(k.kind==='np'&&!map.np){ map.np=c.id; use=true; }
+      else if(k.kind==='doc'&&!map.doc){ map.doc=c.id; use=true; }
+      else if(k.kind==='prod'||(k.kind==='maybe'&&c.type==='number')){ map.prod.push({id:c.id,pid:k.pid,label:k.label}); use=true; }
+      if(use){ pick.push(c.id); labels.push(normLabel(c.label)); }
+    });
+    if(!map.np||!map.prod.length) return null;   // 不是使用紀錄分頁
+    return {tab:tabs[i],tabM:i+1,map,pick,labels};
+  });
+  // 名單：統計頁 A 欄「專師」底下到「醫師」為止是專師，之後到空白為止是醫師
+  const rt=ros&&ros.table, colA=[];
+  if(rt){ const lab=normName(rt.cols&&rt.cols[0]&&rt.cols[0].label); if(lab) colA.push(lab);
+    (rt.rows||[]).forEach(r=>colA.push(normName(gcell(r.c&&r.c[0])))); }
+  return {jobs,roster:parseRoster(colA)};
+}
+async function fetchSheet(url){
+  const id=sheetId(url); if(!id) throw new Error('試算表網址格式不對');
+  const enc=encodeURIComponent, lay=await sheetLayout(id), jobs=lay.jobs;
+  const datas=await Promise.all(jobs.map(j=>j?gviz(id,`sheet=${enc(j.tab)}&tq=${enc('select '+j.pick.join(','))}`).catch(e=>({err:e})):null));
+  // 表頭與資料之間有人插欄／搬欄，或某分頁讀失敗 → 整次作廢、保留舊資料（下次再讀）
+  const bad=datas.find((d,i)=>jobs[i]&&d&&(d.err||!d.table||d.table.cols.map(c=>normLabel(c.label)).join('|')!==jobs[i].labels.join('|')));
+  if(bad) throw bad.err||new Error('試算表欄位剛好有變動，請再按一次更新');
+  // 同內容的回應只算一次；優先留「分頁月份＝多數列日期月份」的那份（其餘是不存在分頁回的第一頁）
+  const groups={};
+  datas.forEach((d,i)=>{
+    if(!d||!d.table) return;
+    const j=jobs[i], idx={}; d.table.cols.forEach((c,ci)=>idx[c.id]=ci);
+    const rows=(d.table.rows||[]).map(r=>{ const c=r.c||[], cnt={};
+      j.map.prod.forEach(p=>{ const n=qty(gcell(c[idx[p.id]])); if(n) cnt[p.pid]=(cnt[p.pid]||0)+n; });
+      return {seq:j.map.seq?gcell(c[idx[j.map.seq]]):null, date:j.map.date?parseDate(gcell(c[idx[j.map.date]])):null, cnt,
+              np:gcell(c[idx[j.map.np]]), doc:j.map.doc?gcell(c[idx[j.map.doc]]):null,
+              k:JSON.stringify(c.map(gcell))}; })   // k＝原始儲存格，只用來比對回聲
+      .filter(r=>Object.keys(r.cnt).length);
+    if(!rows.length) return;
+    const ms={}; rows.forEach(r=>{ if(r.date&&r.date.m) ms[r.date.m]=(ms[r.date.m]||0)+1; });
+    const domM=Number(Object.keys(ms).sort((a,b)=>ms[b]-ms[a])[0])||null;
+    const sig=JSON.stringify(d.table.rows), g=groups[sig];
+    const cand={tabM:j.tabM,domM,rows,extra:j.map.prod.filter(p=>p.label).map(p=>p.label),good:domM===j.tabM,n:(g?g.n:0)+1};
+    if(!g||(!g.good&&cand.good)) groups[sig]=cand; else g.n=cand.n;
+  });
+  // 多數列月份和分頁名稱對不上的內容：
+  //  ・跟已採用分頁大半相同 → 是「第一個分頁」的回聲（有人正在輸入，各分頁回應差一兩列）→ 略過
+  //  ・只有一個分頁回這份 → 真的分頁、只是日期打錯 → 照分頁月份計
+  //  ・好幾個分頁都回這份、又沒有一頁月份對得上 → 無法判斷是哪個月，不計、出提醒
+  const gs=Object.values(groups), goodK={};
+  gs.forEach(g=>{ if(g.good) g.rows.forEach(r=>goodK[r.k]=(goodK[r.k]||0)+1); });
+  const acc={months:{},extra:{},undated:0,mismatch:0,dropped:0,roster:lay.roster};
+  gs.forEach(g=>{
+    if(g.domM!=null&&!g.good){
+      const left={...goodK}; let hit=0;
+      g.rows.forEach(r=>{ if(left[r.k]>0){ left[r.k]--; hit++; } });
+      if(hit>=g.rows.length/2) return;
+      if(g.n>1){ acc.dropped+=g.rows.reduce((t,r)=>t+sumVals(r.cnt),0); return; }
+    }
+    addRows(acc,g.rows,g.tabM); g.extra.forEach(l=>acc.extra[l]=1);
+  });
+  return acc;
+}
+// 備援：試算表改成不公開後，改上傳「檔案→下載→Microsoft Excel」的 xlsx
+function parseWorkbook(wb){
+  const acc={months:{},extra:{},undated:0,mismatch:0,dropped:0,roster:{np:[],doc:[]}};
+  wb.SheetNames.forEach(name=>{
+    const aoa=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:null});
+    if(/統計/.test(name)){ acc.roster=parseRoster(aoa.map(r=>normName(r&&r[0]))); return; }
+    const mm=name.match(/(\d{1,2})\s*月/), tabM=mm&&+mm[1]>=1&&+mm[1]<=12?+mm[1]:null;
+    for(let hi=0;hi<Math.min(6,aoa.length);hi++){
+      const map={prod:[]};
+      (aoa[hi]||[]).forEach((lbl,ci)=>{
+        const k=classify(lbl); if(!k) return;
+        if(k.kind==='seq'&&map.seq==null) map.seq=ci;
+        else if(k.kind==='date'&&map.date==null) map.date=ci;
+        else if(k.kind==='np'&&map.np==null) map.np=ci;
+        else if(k.kind==='doc'&&map.doc==null) map.doc=ci;
+        else if(k.kind==='prod') map.prod.push({ci,pid:k.pid});
+        else if(k.kind==='maybe'){
+          const vals=aoa.slice(hi+1).map(r=>r&&r[ci]).filter(v=>v!=null&&v!=='');
+          if(vals.length&&vals.every(v=>typeof v==='number'||/^\d+(\.\d+)?$/.test(String(v).trim()))) map.prod.push({ci,pid:k.pid,label:k.label});
+        }
+      });
+      if(map.np==null||!map.prod.length) continue;
+      const rows=aoa.slice(hi+1).map(r=>{ r=r||[]; const cnt={};
+        map.prod.forEach(p=>{ const n=qty(r[p.ci]); if(n) cnt[p.pid]=(cnt[p.pid]||0)+n; });
+        return {seq:map.seq!=null?r[map.seq]:null,date:map.date!=null?parseDate(r[map.date]):null,cnt,np:r[map.np],doc:map.doc!=null?r[map.doc]:null}; });
+      addRows(acc,rows,tabM);
+      map.prod.forEach(p=>{ if(p.label) acc.extra[p.label]=1; });
+      break;
+    }
+  });
+  return acc;
+}
+// 每次都是整份讀，所以「這次涵蓋的年度」裡原本有、這次沒有的月份要清掉（試算表刪列／誤判月份才不會殘留）；
+// 但已有確認紀錄的月份不清，保留最後一次讀到的內容並標 gone，免得對不回去。其他年度原封不動。
+function mergeResult(acc,source){
+  const D=state.data, keys=Object.keys(acc.months).sort();
+  const cnt=k=>D.months[k]?D.months[k].rows.reduce((t,r)=>t+sumVals(r.it),0):0;
+  const before=JSON.stringify([D.months,D.roster,D.extra]), cntBefore={};
+  Object.keys(D.months).forEach(k=>cntBefore[k]=cnt(k));
+  if(keys.length){
+    const yrs=new Set(keys.map(k=>k.split('-')[0]));
+    Object.keys(D.months).forEach(k=>{ if(!yrs.has(k.split('-')[0])||acc.months[k]) return;
+      if(Object.keys(paidOf(k)).length) D.months[k].gone=true; else delete D.months[k]; });
+    keys.forEach(k=>{ D.months[k]={rows:acc.months[k].rows}; });
+  }
+  if(acc.roster.np.length) D.roster=acc.roster;
+  Object.assign(D.extra,acc.extra);
+  const changed=JSON.stringify([D.months,D.roster,D.extra])!==before, now=new Date().toISOString();
+  D.checked=now; if(changed||!D.changed) D.changed=now;
+  D.source=source; D.warn={undated:acc.undated,mismatch:acc.mismatch,dropped:acc.dropped||0};
+  saveState(true);
+  const dl=[...new Set([...Object.keys(cntBefore),...Object.keys(D.months)])].sort().map(k=>{
+    const d=cnt(k)-(cntBefore[k]||0); return d?`${Number(k.split('-')[1])}月 ${d>0?'+':''}${d} 件`:''; }).filter(Boolean).join('、');
+  return {changed,delta:dl};
+}
+async function refresh(silent){
+  if(busy) return;
+  if(VIEW&&!sheetUrl()){ loadView(); return; }
+  const url=sheetUrl();
+  if(!url){ if(!silent){ $('card-cfg').open=true; alert('還沒設定試算表網址，請到最下方「其他設定」貼上。'); } renderStatus(); return; }
+  busy=true; renderStatus();
+  try{
+    const r=mergeResult(await fetchSheet(url),'sheet');
+    fail=null; if(r.delta) delta={txt:r.delta,at:Date.now()};
+    busy=false;
+    if(r.changed) publishViews();
+    if(r.changed||!silent||!cur) renderAll(); else renderStatus();
+  }catch(e){
+    busy=false; fail={at:new Date().toISOString(),msg:(e&&e.message)||String(e)};
+    renderStatus(); if(!silent) alert('讀取試算表失敗：'+fail.msg+'\n\n畫面上保留的是上次讀到的資料。');
+  }
+}
+
+// ---------- 畫面 ----------
+const hm=iso=>{ const d=new Date(iso); if(isNaN(d)) return '';
+  const t=`${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return d.toDateString()===new Date().toDateString()?t:`${d.getMonth()+1}/${d.getDate()} ${t}`; };
+function renderStatus(){
+  const D=state.data, el=$('status'); $('btn-refresh').disabled=busy;
+  if(busy) el.textContent='讀取試算表中…';
+  else if(fail) el.textContent=`⚠ ${hm(fail.at)} 讀取失敗`+(D.checked?`，顯示 ${hm(D.checked)} 的資料`:'');
+  else if(D.checked) el.textContent=`${D.source==='upload'?'上傳檔':'試算表'}已同步 ${hm(D.checked)}`+(delta&&Date.now()-delta.at<10*60*1000?`　新進：${delta.txt}`:'');
+  else el.textContent='尚未讀取試算表';
+  el.title=fail?fail.msg:'';
+}
+function renderAll(){
+  const ks=allKeys();
+  // 個人查看：沒自己點過月份就一直跟著最新的月份（要看的是這個月正在累積的點數）
+  if(VIEW){ if(!_mePicked||!cur||!ks.includes(cur)) cur=ks.length?ks[ks.length-1]:null; renderStatus(); renderMe(ks); return; }
+  if(!cur||!ks.includes(cur)) cur=defaultKey();
+  // 還沒有任何月份資料（新裝置）時先不顯示點數表與年度總覽，免得一堆 0 讓人誤會
+  $('card-rates').style.display=$('card-year').style.display=cur?'':'none';
+  renderAlerts(); renderStatus(); renderMonths(ks); renderMonth(); renderRates(); renderYear(); renderCfg();
+}
+function renderMonths(ks){
+  if(!ks.length){ $('months').innerHTML=''; return; }
+  let lastY=null;
+  $('months').innerHTML=ks.map(k=>{ const [y,m]=k.split('-').map(Number), t=monthTotals(people(calcMonth(k)));
+    const lab=(y!==lastY?y+'年 ':'')+m+'月'; lastY=y;
+    return `<button class="mchip${k===cur?' on':''}" data-act="month" data-k="${k}"><i class="${t.state}"></i>${lab}</button>`; }).join('')+
+    '<span class="legend"><span><i style="background:#2eb872"></i>全部確認</span><span><i style="background:#f2a541"></i>確認一部分</span><span><i style="background:#e2574c"></i>還沒確認</span></span>';
+}
+const payWord=p=>({ok:'已確認',no:'未確認',day:'確認日期'});
+function payCell(p){
+  const k=esc(p.pk), W=payWord(p);
+  if(!p.payable) return '<span class="tag no">沒填姓名，無法確認</span>';
+  if(p.rec){
+    const diff=p.amt-p.rec.amt;
+    let h=`<span class="tag ok">✓ ${W.ok} ${fmt(p.rec.amt)} 點</span> <input type="date" class="pdate" title="${W.day}" value="${esc(p.rec.at||'')}" data-act="date" data-k="${k}"> `+
+      `<button class="btn mini ghost" data-act="unpay" data-k="${k}">取消</button>`;
+    if(diff) h+=`<div class="diff">⚠ 現在算出來是 ${fmt(p.amt)} 點，比已確認的${diff>0?'多':'少'} ${fmt(Math.abs(diff))} 點　`+
+      `<button class="btn mini outline" data-act="repay" data-k="${k}">改成 ${fmt(p.amt)} 點</button></div>`;
+    return h;
+  }
+  if(!p.amt) return '<span class="mut">—</span>';
+  return `<span class="tag no">${W.no}</span> <button class="btn mini" data-act="pay" data-k="${k}">確認</button>`;
+}
+const nameBtn=p=>p.name?`<button class="nm" data-act="detail" data-k="${esc(p.pk)}" title="看逐筆明細">${esc(p.name)}</button>`
+  :`<button class="nm" data-act="detail" data-k="${esc(p.pk)}" style="color:var(--bad)">（未填${p.role==='d'?'醫師':'專師'}）</button>`;
+const qtd=(n,pid)=>n?`<td class="n q" data-l="${esc(prodName(pid))}">${n}</td>`:'<td class="z q">0</td>';
+function rateText(cfg,pids){
+  // 點數相同的品項併成一句：「品項A／品項B 每件：醫師 x、推廣專師 y、專師平分 z」
+  const g={};
+  pids.forEach(pid=>{ const r=rateOf(cfg,pid), s=`醫師 ${fmt(r.doc)}、推廣專師 ${fmt(r.promo)}、專師平分 ${fmt(r.pool)}${r.fund?`、科部 ${fmt(r.fund)}`:''}`; (g[s]||(g[s]=[])).push(prodName(pid)); });
+  return Object.keys(g).map(s=>`${g[s].join('／')} 每件：${s}`).join('；');
+}
+function monthWarnings(c,list){
+  const w=[], D=state.data, sw=D.warn||{};
+  const noNp=c.np['']?sumVals(c.np[''].it):0, noDoc=c.doc['']?sumVals(c.doc[''].it):0;
+  if(noNp) w.push(`有 ${noNp} 件沒填專師，推廣點數 ${fmt(c.np[''].promo)} 沒有對應的人——請回試算表補上再按更新。`);
+  if(noDoc) w.push(`有 ${noDoc} 件沒填醫師，醫師點數 ${fmt(c.doc[''].amt)} 沒有對應的人——請回試算表補上再按更新。`);
+  const known=new Set([...D.roster.np,...c.cfg.sharers]), knownD=new Set(D.roster.doc);
+  const oddNp=Object.keys(c.np).filter(n=>n&&!known.has(n)&&sumVals(c.np[n].it));
+  if(oddNp.length&&known.size) w.push(`專師「${oddNp.join('、')}」不在名單上，請確認是不是打錯字（有推廣點數、但不參加平分）。`);
+  const oddDoc=Object.keys(c.doc).filter(n=>n&&!knownD.has(n));
+  if(oddDoc.length&&knownD.size) w.push(`醫師「${oddDoc.join('、')}」不在試算表統計頁的名單上，請確認是不是打錯字。`);
+  const zr=Object.keys(c.zeroRate);
+  if(zr.length) w.push(`品項「${zr.map(prodName).join('、')}」還沒設定點數（目前以 0 計），請在「每件點數」那張表填上。`);
+  const np=Object.keys(c.noPrice);
+  if(np.length) w.push(`品項「${np.map(prodName).join('、')}」還沒填品項點數，「品項總點數」沒算到它——請在「每件點數」那張表的「品項點數」欄填上。`);
+  if(!c.cfg.sharers.length&&c.pool) w.push(`平分名單是空的，專師平分池 ${fmt(c.pool)} 點沒有分出去——請在「每件點數」下方的平分名單加入姓名。`);
+  else if(c.poolLeft) w.push(`平分池 ${fmt(c.pool)} ÷ ${c.cfg.sharers.length} 位除不盡，每人 ${fmt(c.share)} 點，剩 ${fmt(c.poolLeft)} 點沒分。`);
+  if(c.gone) w.push('試算表現在讀不到這個月的分頁，以下是最後一次讀到的內容（因為已有確認紀錄所以保留）。');
+  if(sw.mismatch) w.push(`試算表有 ${sw.mismatch} 筆的日期與所在分頁月份不符（已依分頁月份計）。`);
+  if(sw.undated) w.push(`試算表有 ${sw.undated} 件沒有日期也不在月份分頁、未計入。`);
+  if(sw.dropped) w.push(`試算表有 ${sw.dropped} 件無法判斷屬於哪個月、未計入，請檢查第一個分頁的日期。`);
+  return w;
+}
+// 還沒有任何月份資料時顯示：有網址→等讀取；沒網址→請輸入同步密碼（別台設定過）或貼網址（第一次）
+function setupHtml(){
+  if(sheetUrl()) return `<div class="card empty">${busy?'讀取試算表中…':'還沒有資料，按右上角「🔄 從試算表更新」。'}</div>`;
+  if(sync&&syncSt.k==='denied') return '<div class="card empty">雲端同步還沒開通（做法見最下方「其他設定」），所以還拿不到資料。</div>';
+  if(sync&&/busy|idle/.test(syncSt.k)) return '<div class="card empty">正在從雲端載入…</div>';
+  // 已連上雲端，但這組密碼底下還沒有設定資料：電腦那邊還沒上傳，或兩邊密碼不同
+  if(sync) return `<div class="card"><div class="setup"><h2>雲端已連上，但還沒有資料</h2>
+    <div class="hint" style="font-size:14px;line-height:1.8">這組密碼的雲端空間目前是空的，通常是下面兩種情況之一：<br>
+    <b>① 電腦那邊還沒上傳</b>——請在電腦上用原本的方式打開這個程式（資料夾裡的 index.html），到最下方「其他設定 → 雲端同步」輸入<b>同一組密碼</b>；已經輸入過的話，把它打開放著一分鐘即可。完成後回到這裡按下面的按鈕。<br>
+    <b>② 兩邊的密碼不一樣</b>——到最下方「其他設定」按「在這台裝置關閉同步」，再重新輸入一次。</div>
+    <div class="row"><button class="btn" data-act="sync-now">重新從雲端載入</button></div></div></div>`;
+  return `<div class="card"><div class="setup"><h2>要看自己的點數</h2>
+    <div class="hint">請打開主任傳給你的個人連結；或把那條連結貼在這裡。</div>
+    <div class="row"><input type="text" id="me-link" placeholder="貼上個人連結" autocomplete="off" style="flex:1;min-width:180px"><button class="btn" data-act="me-paste">開啟</button></div></div></div>
+    <div class="card"><div class="setup"><h2 style="font-size:15px;color:var(--mut)">管理者（主任）</h2>
+    <div class="hint">已經在別台裝置開過雲端同步：輸入同步密碼，設定與確認註記就會載進來。從來沒設定過：到最下方「其他設定」貼上試算表網址。</div>
+    <div class="row"><input type="password" id="setup-pw" placeholder="同步密碼" autocomplete="off" style="flex:1;min-width:180px"><button class="btn outline" data-act="sync-on" data-src="setup-pw">載入</button></div></div></div>`;
+}
+function renderMonth(){
+  const top=$('month-top'), el=$('month-view');
+  if(!cur){
+    top.innerHTML=setupHtml(); el.innerHTML=''; return;
+  }
+  const c=calcMonth(cur), list=people(c), t=monthTotals(list);
+  const docs=list.filter(p=>p.role==='d'), nps=list.filter(p=>p.role==='n'), fp=list.find(p=>p.role==='f');
+  const pids=monthPids(c);
+  const dTot=docs.reduce((s,p)=>s+p.amt,0), nTot=nps.reduce((s,p)=>s+p.amt,0), promoTot=nps.reduce((s,p)=>s+p.promo,0);
+  const canPay=role=>list.some(p=>p.role===role&&p.payable&&!p.rec&&p.amt>0);
+  let h=`<div class="mhead"><h2>${keyLabel(cur)} 點數</h2>
+    <span class="r"><button class="btn outline" data-act="print">🖨 列印確認清冊</button><button class="btn outline" data-act="csv">⬇ 匯出 CSV</button></span></div>`;
+  const w=monthWarnings(c,list);
+  if(w.length) h+=`<div class="note warn"><ul>${w.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
+  // 品項概況：總點數＝各品項件數×品項點數；一筆紀錄算一位病人
+  const pk=shiftKey(cur,-1), pc=state.data.months[pk]?calcMonth(pk):null;
+  const dl=pc&&pc.sales?(c.sales-pc.sales)/pc.sales*100:null;
+  h+=`<div class="tiles sales">
+    <div class="tile big"><div class="v">${fmt(c.sales)}</div><div class="l">品項總點數</div>
+      <div class="s">${dl==null?'沒有上個月的資料可比':`較上月 <span class="${dl>=0?'up':'dn'}">${dl>=0?'▲ +':'▼ '}${dl.toFixed(1)}%</span>`}</div></div>
+    <div class="tile big"><div class="v">${c.units}</div><div class="l">總件數</div>
+      <div class="s">${c.rows.length} 位病人${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${c.prod[pid]}`).join('・'):''}</div></div>
+  </div>`;
+  h+=`<div class="tiles">
+    <div class="tile"><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div></div>
+    <div class="tile"><div class="l">醫師點數合計</div><div class="v">${fmt(dTot)}</div><div class="s">${docs.filter(p=>p.amt>0).length} 位</div></div>
+    <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">推廣 ${fmt(promoTot)}＋平分 ${fmt(c.share*c.cfg.sharers.length)}</div></div>
+    ${fp?`<div class="tile"><div class="l">科部</div><div class="v">${fmt(fp.amt)}</div><div class="s">不屬於個人</div></div>`:''}
+    <div class="tile ${t.unpaid?'due':'ok'}"><div class="l">${t.unpaid?'還沒確認':'確認進度'}</div><div class="v">${t.unpaid?fmt(t.unpaid):(t.due?'全部確認':'—')}</div>
+      <div class="s">已確認 ${fmt(t.paid)}／共 ${fmt(t.due)}${t.over?`（多 ${fmt(t.over)}）`:''}</div><div class="bar"><span style="width:${t.due?Math.min(100,t.paid/t.due*100):0}%"></span></div></div>
+  </div>`;
+  top.innerHTML=h; h='';   // 月份標題＋數字磚在點數卡上方，醫師／專師表在下方
+  const row=(p,cells)=>`<tr class="${!p.payable?'bad':p.rec&&p.rec.amt===p.amt?'paid':''}"><td class="l nmc">${nameBtn(p)}</td>${cells}<td class="st">${payCell(p)}</td></tr>`;
+  // 三張卡都可收合（點標題列）；收合時標題列仍看得到點數與確認進度
+  const prog=(arr,okW)=>{ const a=arr.filter(p=>p.payable&&(p.amt>0||p.rec)), done=a.filter(p=>p.rec&&p.rec.amt>=p.amt).length;
+    return !a.length?'':done===a.length?`<span class="tag ok">✓ 全部${okW}</span>`:`<span class="tag no">${okW} ${done}／${a.length} 位</span>`; };
+  const sec=(id,title,amt,tag,body)=>`<details class="card sec" data-sec="${id}"${isOpen(id)?' open':''}><summary><span>${title}</span><span class="sum-amt">${fmt(amt)} 點</span>${tag}</summary>${body}</details>`;
+  const allBtn=(role,who)=>canPay(role)?`<button class="btn mini" data-act="payall" data-role="${role}">${who}全部確認</button>`:'';
+  // 醫師
+  const dShow=docs.filter(p=>p.amt>0||p.rec||sumVals(p.it));
+  h+=sec('d','醫師點數',dTot,prog(docs,'已確認'),`<div class="sec-head"><div class="hint">點姓名可看逐筆明細。</div>${allBtn('d','醫師')}</div><div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th class="l">確認</th></tr></thead><tbody>`+
+    (dShow.length?dShow.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+3}">本月沒有紀錄</td></tr>`)+
+    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="amt">${fmt(dTot)}</td><td class="st"></td></tr></tbody></table></div>`);
+  // 專師
+  h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`<div class="sec-head"><div class="hint">件數＝本人推廣的件數。平分：本月平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點（推廣的人自己也分得到）。</div>${allBtn('n','專師')}</div>
+    <div class="tw"><table class="ppl"><thead><tr><th class="l">專師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>推廣點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
+    (nps.length?nps.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="n sub" data-l="推廣">${fmt(p.promo)}</td><td class="n sub" data-l="＋平分">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
+    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="n sub" data-l="推廣">${fmt(promoTot)}</td><td class="n sub" data-l="＋平分">${fmt(nTot-promoTot)}</td><td class="amt">${fmt(nTot)}</td><td class="st"></td></tr></tbody></table></div>
+    <div class="sub2">本月計算方式——${esc(rateText(c.cfg,pids.length?pids:PRODUCTS.map(p=>p.id)))}。</div>`);
+  // 科部（不屬於個人的部分）
+  if(fp){
+    const fpids=pids.filter(pid=>fp.it[pid]);
+    h+=sec('f','科部',fp.amt,fp.rec&&fp.rec.amt>=fp.amt?'<span class="tag ok">✓ 已確認</span>':'<span class="tag no">未確認</span>',
+    `<div class="sec-head"><div class="hint">不屬於醫師或專師個人的部分。歸入科部後按「確認」。</div></div>
+    <div class="tw"><table class="ppl"><thead><tr><th class="l">項目</th>${fpids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th class="l">確認</th></tr></thead><tbody>
+    <tr class="${fp.rec&&fp.rec.amt===fp.amt?'paid':''}"><td class="l nmc"><b>科部</b></td>${fpids.map(pid=>qtd(fp.it[pid],pid)).join('')}<td class="amt">${fmt(fp.amt)}</td><td class="st">${payCell(fp)}</td></tr></tbody></table></div>`);
+  }
+  el.innerHTML=h;
+}
+function renderYear(){
+  const el=$('year-view'), ks=allKeys();
+  if(!ks.length){ el.innerHTML='<div class="mut">還沒有資料</div>'; return; }
+  const years=[...new Set(ks.map(k=>k.split('-')[0]))];
+  if(!yearSel||!years.includes(yearSel)) yearSel=(cur||ks[ks.length-1]).split('-')[0];
+  const mks=ks.filter(k=>k.startsWith(yearSel+'-')), per={}, colTot={};
+  mks.forEach(k=>{ colTot[k]={due:0,paid:0};
+    people(calcMonth(k)).forEach(p=>{ if(!p.payable||(!p.amt&&!p.rec)) return;
+      (per[p.pk]||(per[p.pk]={role:p.role,name:p.name,m:{}})).m[k]=p;
+      colTot[k].due+=p.amt; colTot[k].paid+=p.rec?p.rec.amt:0; }); });
+  const cell=p=>{ if(!p) return '<td class="z">—</td>';
+    if(p.rec&&p.rec.amt===p.amt) return `<td class="ycell p" title="已確認 ${esc(p.rec.at||'')}">${fmt(p.amt)} ✓</td>`;
+    if(p.rec) return `<td class="ycell w" title="已確認 ${fmt(p.rec.amt)}，現在是 ${fmt(p.amt)}">${fmt(p.amt)} ⚠</td>`;
+    return `<td class="ycell u" title="還沒確認">${fmt(p.amt)}</td>`; };
+  const sect=(role,title)=>{
+    const rows=Object.values(per).filter(x=>x.role===role).map(x=>{
+      const tot=mks.reduce((s,k)=>s+(x.m[k]?x.m[k].amt:0),0), paid=mks.reduce((s,k)=>s+(x.m[k]&&x.m[k].rec?x.m[k].rec.amt:0),0);
+      return {x,tot,owe:mks.reduce((s,k)=>{ const p=x.m[k]; return s+(p?Math.max(0,p.amt-(p.rec?p.rec.amt:0)):0); },0),paid}; })
+      .sort((a,b)=>b.tot-a.tot);
+    if(!rows.length) return '';
+    return `<tr><th class="l" colspan="${mks.length+3}">${title}</th></tr>`+rows.map(r=>
+      `<tr><td class="l">${esc(r.x.name)}</td>${mks.map(k=>cell(r.x.m[k])).join('')}<td class="amt">${fmt(r.tot)}</td><td class="ycell ${r.owe?'u':'p'}">${r.owe?fmt(r.owe):'✓'}</td></tr>`).join('');
+  };
+  const gDue=mks.reduce((s,k)=>s+colTot[k].due,0), gPaid=mks.reduce((s,k)=>s+colTot[k].paid,0);
+  el.innerHTML=(years.length>1?`<div class="row" style="margin:0 0 10px">年度 <select data-act="year">${years.map(y=>`<option${y===yearSel?' selected':''}>${y}</option>`).join('')}</select></div>`:'')+
+    `<div class="hint">綠色 ✓＝已確認；紅色＝還沒確認；⚠＝確認之後試算表又有變動、點數對不上。</div>
+    <div class="tw"><table><thead><tr><th class="l">${yearSel}年</th>${mks.map(k=>`<th>${Number(k.split('-')[1])}月</th>`).join('')}<th>合計</th><th>還沒確認</th></tr></thead><tbody>`+
+    sect('d','醫師')+sect('n','專師')+sect('f','科部')+
+    `<tr class="tot"><td class="l">合計</td>${mks.map(k=>`<td class="n">${fmt(colTot[k].due)}</td>`).join('')}<td class="amt">${fmt(gDue)}</td><td class="n">${fmt(Math.max(0,gDue-gPaid))}</td></tr></tbody></table></div>`;
+}
+function rateDerived(r){ return {np:r.promo+r.pool,all:r.doc+r.promo+r.pool+r.fund}; }
+// 每件點數＋平分名單：放在每月畫面正上方，改了下面的醫師／專師點數立刻重算
+function renderRates(){
+  const el=$('rates-view');
+  if(!(el.contains(document.activeElement)&&document.activeElement.tagName==='INPUT')){   // 正在打字就不重畫
+    const rates=liveRates(), sh=liveSharers(), auto=!state.cfg.sharers, N=sh.length;
+    el.innerHTML=`<div class="hint">白色格子都可以直接改（每一件的點數），改完下面的點數馬上重算。「品項點數」只用來算品項總點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
+    <div class="tw"><table><thead><tr><th class="l">品項</th><th>品項點數</th><th>醫師</th><th>推廣的專師</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
+    productList().map(p=>{ const r=rates[p.id], d=rateDerived(r), id=esc(p.id);
+      const inp=f=>`<td><input type="number" min="0" step="10" value="${r[f]}" data-act="rate" data-pid="${id}" data-f="${f}"></td>`;
+      return `<tr data-row="${id}"><td class="l"><b>${esc(p.name)}</b></td>${inp('price')}${inp('doc')}${inp('promo')}${inp('pool')}${inp('fund')}<td class="n" data-c="each">${N?fmt2(r.pool/N):'—'}</td><td class="n" data-c="np">${fmt(d.np)}</td><td class="amt" data-c="all">${fmt(d.all)}</td></tr>`; }).join('')+
+    `</tbody></table></div>
+    <div id="rates-note"></div>
+    <div class="row">${window.COMMISSION_DEFAULT_RATES?'<button class="btn mini ghost" data-act="rate-reset">↺ 點數全部恢復預設值</button>':''}
+      <span class="mut" style="font-size:12.5px">修改只影響<b>還沒確認過</b>的月份；已經有確認紀錄的月份照當時的點數，不會被回頭改到。</span></div>
+    <h3>專師平分名單（目前 <span class="cfg-n">${N}</span> 位，「其餘專師平分」的點數由這些人均分，推廣的人自己也分得到）</h3>
+    <div class="chips">${sh.map(n=>`<span class="chip">${esc(n)}<button title="移出名單" data-act="sharer-del" data-n="${esc(n)}">×</button></span>`).join('')||'<span class="mut">（空的）</span>'}</div>
+    <div class="row"><input type="text" id="sharer-new" placeholder="新增姓名" style="width:130px"><button class="btn mini outline" data-act="sharer-add">＋加入</button>
+      ${auto?'<span class="mut" style="font-size:12.5px">目前跟著試算表「統計」頁的專師名單</span>':'<button class="btn mini ghost" data-act="sharer-reset">↺ 改回跟著試算表統計頁名單</button>'}</div>`;
+  }
+  renderRatesNote();
+}
+// 目前看的月份已有確認紀錄、且照當時設定算出來的點數和現行設定不同 → 在點數卡裡說明，並給「這個月也改用新數字」的按鈕
+function renderRatesNote(){
+  const el=$('rates-note'); if(!el) return;
+  if(!cur||!snapDiffers(cur)){ el.innerHTML=''; return; }
+  const c=calcMonth(cur), m=keyLabel(cur);
+  el.innerHTML=`<div class="note info"><b>${m}已經有確認紀錄</b>，所以這個月仍照當時的點數計算（${esc(rateText(c.cfg,monthPids(c)))}；平分 ${c.cfg.sharers.length} 位），上面的修改不會動到它。　`+
+    `<button class="btn mini outline" data-act="resnap">讓${m}也改用上面的數字重算</button></div>`;
+}
+function renderCfg(){
+  const el=$('cfg-view');
+  if(el.contains(document.activeElement)&&document.activeElement.tagName==='INPUT') return;   // 正在打字就不重畫
+  el.innerHTML=`<h3 id="sync-h">雲端同步（手機、電腦共用同一份設定與確認註記）</h3>${syncHtml()}
+    <h3>個人查看連結（專師只看得到自己的點數）</h3>${viewsHtml()}
+    <h3>試算表</h3>
+    <div class="row"><input type="url" id="cfg-url" style="flex:1;min-width:260px" placeholder="https://docs.google.com/spreadsheets/d/…" value="${esc(sheetUrl())}"><button class="btn mini outline" data-act="url-save">儲存並更新</button></div>
+    <div class="hint" style="margin-top:6px">只讀取 序／日期／各品項數量／專師／醫師 欄，病歷號與病人姓名不會下載。試算表若改成不公開，可改用
+      <label style="color:var(--navy);cursor:pointer;text-decoration:underline">上傳下載的 xlsx<input type="file" accept=".xlsx" style="display:none" data-act="upload"></label>（Google 試算表：檔案 → 下載 → Microsoft Excel）。</div>
+    <h3>備份</h3>
+    <div class="row"><button class="btn mini outline" data-act="backup-export">⬇ 匯出備份檔</button>
+      <label class="btn mini outline">⬆ 匯入備份檔<input type="file" accept=".json" style="display:none" data-act="backup-import"></label>
+      <span class="mut" style="font-size:12.5px">沒開雲端同步時，確認註記只存在這台裝置的瀏覽器裡，建議每次確認完匯出一份。</span></div>
+    <h3>版本</h3>
+    <div class="row"><span class="mut">目前版本 ${APP_VER}</span><button class="btn mini ghost" data-act="force-update">強制更新到最新版</button></div>`;
+}
+function syncHtml(){
+  if(!window.crypto||!crypto.subtle) return '<div class="hint">這個瀏覽器不支援加密功能，無法使用雲端同步。</div>';
+  if(!sync) return `<div class="hint">開啟後，點數、平分名單、試算表網址、確認註記會在您的各台裝置之間同步。上傳前先用下面的「同步密碼」加密，雲端上只有亂碼；
+      密碼不會被儲存或上傳，<b>忘記就解不開</b>，請自己記好。每台裝置輸入一次即可。</div>
+    <div class="row"><input type="password" id="sync-pw" placeholder="同步密碼（至少 10 個字，英文＋數字）" autocomplete="off" style="width:280px"><button class="btn mini" data-act="sync-on" data-src="sync-pw">開啟同步</button></div>`;
+  const k=syncSt.k, tag=k==='ok'?`<span class="tag ok">✓ 已同步 ${hm(new Date(syncSt.at).toISOString())}</span>`
+    :k==='denied'?'<span class="tag no">雲端尚未開通</span>':k==='offline'?'<span class="tag no">離線中，連上網路後自動同步</span>'
+    :k==='error'?`<span class="tag no">同步失敗：${esc(syncSt.msg)}</span>`:'<span class="mut">同步中…</span>';
+  let h=`<div class="row">${tag}<button class="btn mini outline" data-act="sync-now">立即同步</button><button class="btn mini ghost" data-act="sync-off">在這台裝置關閉同步</button></div>
+    <div class="row"><input type="password" id="sync-newpw" placeholder="新的同步密碼（至少 10 個字，英文＋數字）" autocomplete="new-password" style="width:300px"><button class="btn mini outline" data-act="sync-chpw" data-src="sync-newpw">更換同步密碼</button></div>
+    <div class="hint" style="margin-top:4px">更換後舊密碼立刻作廢；還在用舊密碼的裝置下次開啟時，上面的資料會被清掉，要輸入新密碼才載得回來。個人查看連結不受影響。</div>`;
+  if(k==='denied') h+=`<div class="note warn" style="margin-top:10px">雲端資料庫還沒允許這個 App 存取（只需要做一次）。請到
+      <a href="https://console.firebase.google.com/project/tenchener-488d2/database/tenchener-488d2-default-rtdb/rules" target="_blank" rel="noopener">Firebase 主控台 → Realtime Database →「規則」</a>，
+      在 <code>"rules": {</code> 這一行的<b>正下方</b>貼上這一段（放最前面，結尾的逗號才會對），然後按「發布」。開通後這裡會自動開始同步。<pre class="rule">"erCommissionData": {
+  "$id": { ".read": "auth != null", ".write": "auth != null" }
+},</pre></div>`;
+  return h;
+}
+const fmt2=n=>Number.isInteger(n)?fmt(n):n.toLocaleString('en-US',{maximumFractionDigits:2});
+// 改點數時只更新該列的試算欄，不整塊重畫（重畫會讓正在 Tab 的輸入框失焦）
+function refreshCfgRow(pid){
+  const r=liveRates()[pid], N=liveSharers().length, tr=[...document.querySelectorAll('#rates-view tr[data-row]')].find(t=>t.dataset.row===pid);
+  if(!tr||!r) return; const d=rateDerived(r);
+  tr.querySelector('[data-c=each]').textContent=N?fmt2(r.pool/N):'—';
+  tr.querySelector('[data-c=np]').textContent=fmt(d.np);
+  tr.querySelector('[data-c=all]').textContent=fmt(d.all);
+}
+
+// ---------- 逐筆明細 ----------
+function showDetail(pk){
+  const role=pk[0], name=pk.slice(2), c=calcMonth(cur), f=role==='d'?'doc':'np';
+  const rows=c.rows.filter(r=>r[f]===name), p=people(c).find(x=>x.pk===pk)||{amt:0,promo:0,share:0};
+  const each=r=>Object.keys(r.it).reduce((s,pid)=>s+r.it[pid]*((c.cfg.products[pid]||ZERO)[role==='d'?'doc':'promo']),0);
+  $('dlg').innerHTML=`<h2>${esc(name||'（未填姓名）')}・${keyLabel(cur)}${role==='d'?'醫師點數':'專師推廣'}明細<button class="btn mini ghost" data-act="close">關閉</button></h2>
+    <div class="hint">${rows.length} 筆，${role==='d'?`點數合計 ${fmt(p.amt)}`:`推廣點數 ${fmt(p.promo)}＋平分 ${fmt(p.share)}＝${fmt(p.amt)}`}。「序」對應試算表該分頁的序號。</div>
+    <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">${role==='d'?'推廣專師':'醫師'}</th><th>${role==='d'?'點數':'推廣點數'}</th></tr></thead><tbody>`+
+    (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(role==='d'?r.np:r.doc)||'<span style="color:var(--bad)">未填</span>'}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
+     '<tr><td class="l mut" colspan="5">沒有本人推廣的紀錄（只有平分）</td></tr>')+'</tbody></table></div>';
+  $('mask').classList.add('on');
+}
+
+// ---------- 確認註記 ----------
+// 第一次註記時把當下的設定存成這個月的快照
+function ensureMonth(key){
+  const pm=state.pay[key]||(state.pay[key]={}); pm.paid=pm.paid||{};
+  if(!pm.cfg){ pm.cfg=clone(liveCfg()); pm.cfgT=Date.now(); }
+  else{   // 加科部之前留下的快照：把現行的科部點數寫進去固定下來
+    const live=liveRates(); let ch=false;
+    Object.keys(pm.cfg.products||{}).forEach(pid=>{ const r=pm.cfg.products[pid]; if(!r) return;
+      ['fund','price'].forEach(f=>{ if(r[f]==null){ r[f]=(live[pid]||ZERO)[f]; ch=true; } }); });
+    if(ch) pm.cfgT=Date.now();
+  }
+  return pm;
+}
+function findPerson(pk){ return people(calcMonth(cur)).find(p=>p.pk===pk); }
+function doPay(pk){
+  const p=findPerson(pk); if(!p||!p.payable) return;
+  ensureMonth(cur).paid[pk]={amt:p.amt,at:(p.rec&&p.rec.at)||today(),t:Date.now()};
+  saveState(); renderAll();
+}
+function doUnpay(pk){
+  const p=findPerson(pk); if(!p||!p.rec) return;
+  if(!confirm(`取消「${p.name}」${keyLabel(cur)}的${payWord(p).ok}註記（${fmt(p.rec.amt)} 點）？`)) return;
+  const pm=state.pay[cur]; pm.paid[pk]={del:1,t:Date.now()};
+  if(!Object.keys(paidOf(cur)).length){ pm.cfg=null; pm.cfgT=Date.now(); }   // 整個月都沒有確認紀錄了＝回到跟著現行設定
+  saveState(); renderAll();
+}
+function doPayAll(role){
+  const list=people(calcMonth(cur)).filter(p=>p.role===role&&p.payable&&!p.rec&&p.amt>0);
+  if(!list.length) return;
+  const who=role==='d'?'醫師':'專師';
+  if(!confirm(`把 ${keyLabel(cur)} 還沒確認的 ${list.length} 位${who}（共 ${fmt(list.reduce((s,p)=>s+p.amt,0))} 點）全部標記為已確認？`)) return;
+  const pm=ensureMonth(cur), at=today(), t=Date.now();
+  list.forEach(p=>{ pm.paid[p.pk]={amt:p.amt,at,t}; });
+  saveState(); renderAll();
+}
+
+// ---------- 列印／匯出 ----------
+function printSheet(){
+  if(!cur) return;
+  const c=calcMonth(cur), list=people(c).filter(p=>p.payable&&(p.amt>0||p.rec)), pids=monthPids(c);
+  const docs=list.filter(p=>p.role==='d'), nps=list.filter(p=>p.role==='n'), fund=list.find(p=>p.role==='f'), sum=a=>a.reduce((s,p)=>s+p.amt,0);
+  const th=pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join(''), q=p=>pids.map(pid=>`<td>${p.it[pid]||''}</td>`).join('');
+  const paidAt=p=>p.rec?shortDate(p.rec.at):'';
+  $('print-area').innerHTML=`<h1>急診品項點數確認清冊</h1><div class="ps">${keyLabel(cur)}　共 ${c.units} 件　總點數 ${fmt(c.vendor)}　列印日 ${today()}</div>
+    <h2>醫師（合計 ${fmt(sum(docs))} 點）</h2>
+    <table><thead><tr><th class="l">姓名</th>${th}<th>點數</th><th>確認日</th><th>簽名</th></tr></thead><tbody>
+    ${docs.map(p=>`<tr><td class="l">${esc(p.name)}</td>${q(p)}<td>${fmt(p.amt)}</td><td>${paidAt(p)}</td><td class="sig"></td></tr>`).join('')}</tbody></table>
+    <h2>專科護理師（合計 ${fmt(sum(nps))} 點）</h2>
+    <table><thead><tr><th class="l">姓名</th>${th}<th>推廣點數</th><th>平分</th><th>點數</th><th>確認日</th><th>簽名</th></tr></thead><tbody>
+    ${nps.map(p=>`<tr><td class="l">${esc(p.name)}</td>${q(p)}<td>${fmt(p.promo)}</td><td>${fmt(p.share)}</td><td>${fmt(p.amt)}</td><td>${paidAt(p)}</td><td class="sig"></td></tr>`).join('')}</tbody></table>
+    ${fund?`<h2>科部（不屬於個人）：${fmt(fund.amt)} 點${fund.rec?`　確認日 ${paidAt(fund)}`:''}</h2>`:''}
+    <div class="pf">計算方式：${esc(rateText(c.cfg,pids))}。<br>專師平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點${c.poolLeft?`（餘 ${fmt(c.poolLeft)} 點）`:''}。件數為本人看診（醫師）或推廣（專師）之件數。</div>
+    <div class="sign"><span>製表：＿＿＿＿＿＿</span><span>主任：＿＿＿＿＿＿</span></div>`;
+  window.print();
+}
+function download(name,text,type){
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+function exportCsv(){
+  if(!cur) return;
+  const c=calcMonth(cur), list=people(c).filter(p=>p.amt>0||p.rec||sumVals(p.it)), pids=monthPids(c);
+  const q=v=>{ const s=String(v==null?'':v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+  const lines=[['月份','身分','姓名',...pids.map(pid=>prodName(pid)+'件數'),'醫師點數','推廣點數','平分','合計點數','確認點數','確認日']];
+  list.forEach(p=>lines.push([keyLabel(cur),({d:'醫師',n:'專師',f:'科部'})[p.role],p.name||'（未填）',...pids.map(pid=>p.it[pid]||0),
+    p.role==='d'?p.amt:'',p.role==='n'?p.promo:'',p.role==='n'?p.share:'',p.amt,p.rec?p.rec.amt:'',p.rec?p.rec.at:'']));
+  download(`急診點數_${cur}.csv`,'\ufeff'+lines.map(l=>l.map(q).join(',')).join('\r\n'),'text/csv;charset=utf-8');
+}
+function loadXLSX(){
+  return new Promise((res,rej)=>{ if(window.XLSX) return res();
+    const s=document.createElement('script'); s.src='xlsx.full.min.js'; s.onload=()=>res();
+    s.onerror=()=>rej(new Error('找不到 xlsx.full.min.js（要和 index.html 放在同一個資料夾）')); document.head.appendChild(s); });
+}
+
+// ---------- 雲端同步（加密） ----------
+// 同步內容＝點數／平分名單／試算表網址／確認註記（不含試算表逐筆資料，各裝置自己讀）。
+// 上傳前用「同步密碼」導出的金鑰做 AES-GCM 加密，雲端只有密文；密碼本身不儲存、不上傳，
+// 裝置上只留導出的金鑰與節點代號（LS_SYNC）。節點代號也由密碼導出，而資料庫規則只開放「知道代號才能讀寫該筆」，
+// 所以不知道密碼的人連密文都拿不到。
+const FB_DB='https://tenchener-488d2-default-rtdb.firebaseio.com', FB_NODE='erCommissionData';
+const FB_API_KEY='AIzaSyB6w2D8gaqSBHoDmtWsWGWGY-DQtDEcyFY';   // Firebase Web API key：本來就是設計成公開內嵌的，不是密碼
+const LS_SYNC='erCommission_sync', LS_RT='erCommission_fbrt';
+let sync=null; if(!VIEW){ try{ sync=JSON.parse(localStorage.getItem(LS_SYNC)||'null'); }catch(e){} }
+let syncSt={k:sync?'idle':'off',at:0,msg:''};
+let _tok=null,_tokExp=0,_syncBusy=false,_syncAgain=false,_pushTimer=null;
+const te=new TextEncoder(), td=new TextDecoder();
+const b64=u8=>{ let s=''; for(let i=0;i<u8.length;i+=0x8000) s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000)); return btoa(s); };
+const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+// 物件 key 排序後再序列化：兩台裝置內容相同時字串才會一樣
+const stable=v=>JSON.stringify(v,(k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.keys(x).sort().reduce((o,p)=>(o[p]=x[p],o),{}):x);
+async function deriveSync(pw){
+  const base=await crypto.subtle.importKey('raw',te.encode(pw),'PBKDF2',false,['deriveBits']);
+  const bits=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:te.encode('er-commission-sync-v1'),iterations:250000},base,384));
+  return {key:b64(bits.subarray(0,32)),id:[...bits.subarray(32,48)].map(b=>b.toString(16).padStart(2,'0')).join('')};
+}
+// key／id 不給＝用同步密碼導出的那一組；個人查看連結則各有自己的金鑰與節點
+const aesKey=key=>crypto.subtle.importKey('raw',unb64(key||sync.key),'AES-GCM',false,['encrypt','decrypt']);
+async function seal(obj,key){
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},await aesKey(key),te.encode(JSON.stringify(obj)));
+  return {v:1,t:Date.now(),iv:b64(iv),data:b64(new Uint8Array(ct))};
+}
+async function unseal(blob,key){
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(blob.iv)},await aesKey(key),unb64(blob.data));
+  return JSON.parse(td.decode(pt));
+}
+// 資料庫規則要求登入：用 REST 匿名登入拿 idToken（使用者無感）；之後用 refresh token 續用同一個匿名身分
+async function idToken(force){
+  if(!force&&_tok&&Date.now()<_tokExp) return _tok;
+  const keep=d=>{ _tok=d.idToken||d.id_token; _tokExp=Date.now()+(Number(d.expiresIn||d.expires_in||3600)-60)*1000;
+    const rt=d.refreshToken||d.refresh_token; if(rt){ try{ localStorage.setItem(LS_RT,rt); }catch(e){} } return _tok; };
+  let rt=null; try{ rt=localStorage.getItem(LS_RT); }catch(e){}
+  if(rt){
+    const r=await fetch(`https://securetoken.googleapis.com/v1/token?key=${FB_API_KEY}`,{method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(rt)});
+    if(r.ok) return keep(await r.json());
+  }
+  const r=await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FB_API_KEY}`,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({returnSecureToken:true})});
+  if(!r.ok) throw new Error('雲端登入失敗（HTTP '+r.status+'）');
+  return keep(await r.json());
+}
+async function cloudReq(method,body,id){
+  for(let i=0;;i++){
+    const r=await fetch(`${FB_DB}/${FB_NODE}/${id||sync.id}.json?auth=${encodeURIComponent(await idToken(i>0))}`,
+      {method,cache:'no-store',body:body==null?undefined:JSON.stringify(body)});
+    if(r.ok) return r.json();
+    const msg=await r.text().catch(()=>'');
+    if((r.status===401||r.status===403)&&i===0&&/expired|invalid/i.test(msg)) continue;   // token 過期：重拿一次
+    if(r.status===401||r.status===403) throw Object.assign(new Error('雲端規則尚未開放這個 App'),{kind:'denied'});
+    throw new Error('雲端回應 HTTP '+r.status);
+  }
+}
+// 要同步的內容。點數一律寫出實際數字（含本機預設值），別台裝置才拿得到
+function buildPayload(){
+  const c=state.cfg, rates={}, pay={};
+  Object.keys(c.rates).forEach(pid=>{ const u=c.rates[pid]||{}; rates[pid]={doc:Number(u.doc)||0,promo:Number(u.promo)||0,pool:Number(u.pool)||0,fund:Number(u.fund)||0,price:Number(u.price)||0}; });
+  Object.assign(rates,liveRates());
+  Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm||(!Object.keys(pm.paid||{}).length&&!pm.cfgT)) return;
+    pay[k]={paid:pm.paid||{},cfg:pm.cfg||null,cfgT:pm.cfgT||0}; });
+  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{}},pay};
+}
+const rateSum=r=>r?FIELDS.reduce((t,f)=>t+(Number(r[f])||0),0):0;
+// 本機設定檔（sheet-config.js）的預設值新增了欄位（例如後來才加的科部）時，把還沒填過的欄位補成明確數字、
+// 記成一次修改，這樣才會同步到沒有設定檔的裝置。每個預設值版本只做一次；已經手動填過的不動。
+function applyDefaults(){
+  const d=window.COMMISSION_DEFAULT_RATES, v=window.COMMISSION_DEFAULTS_VERSION||1;
+  if(!d||state.cfg.defV===v) return false;
+  let ch=false;
+  Object.keys(d).forEach(pid=>{ const u=state.cfg.rates[pid]||(state.cfg.rates[pid]={});
+    FIELDS.forEach(f=>{ if((u[f]==null||u[f]==='')&&d[pid][f]!=null){ u[f]=Number(d[pid][f])||0; ch=true; } }); });
+  state.cfg.defV=v; if(ch) state.cfg.tR=Date.now();
+  return true;
+}
+// 把雲端內容併進本機，回傳本機有沒有變。點數／平分名單／網址各自看修改時間，確認註記逐人逐月看修改時間，較新的為準
+function mergeRemote(rm){
+  let ch=false; const c=state.cfg, rc=rm.cfg||{}, rr=rc.rates||{};
+  if((rc.tR||0)>(c.tR||0)){ c.rates=clone(rr); c.tR=rc.tR; ch=true; }
+  else{
+    const mine=liveRates();
+    Object.keys(rr).forEach(pid=>{
+      // 兩邊都沒手動改過：本機是 0 的品項用雲端的補上（新裝置第一次同步）；雲端有、本機沒有的品項也記下來
+      if((!(c.tR||0)&&!(rc.tR||0)&&rateSum(rr[pid])&&!rateSum(mine[pid]||c.rates[pid]))||(!(pid in mine)&&!(pid in c.rates))){ c.rates[pid]=clone(rr[pid]); ch=true; }
+    });
+  }
+  if((rc.tS||0)>(c.tS||0)){ c.sharers=Array.isArray(rc.sharers)?rc.sharers.slice():null; c.tS=rc.tS; ch=true; }
+  c.views=c.views||{};
+  Object.keys(rc.views||{}).forEach(n=>{ const a=rc.views[n], b=c.views[n]; if(a&&(!b||(a.t||0)>(b.t||0))){ c.views[n]=a; ch=true; } });
+  if(rc.url&&((rc.tU||0)>(c.tU||0)||!sheetUrl())){
+    if(rc.url!==window.COMMISSION_SHEET_URL) c.url=rc.url; else delete c.url;
+    c.tU=Math.max(c.tU||0,rc.tU||0); ch=true;
+  }
+  Object.keys(rm.pay||{}).forEach(k=>{
+    const r=rm.pay[k]||{}, l=state.pay[k]||(state.pay[k]={paid:{}}); l.paid=l.paid||{};
+    if((r.cfgT||0)>(l.cfgT||0)){ l.cfg=r.cfg||null; l.cfgT=r.cfgT; ch=true; }
+    Object.keys(r.paid||{}).forEach(pk=>{ const k2=pk===OLD_FUND_PK?FUND_PK:pk, a=r.paid[pk], b=l.paid[k2]; if(!b||(a.t||0)>(b.t||0)){ l.paid[k2]=a; ch=true; } });
+  });
+  return ch;
+}
+function setSync(k,msg){ syncSt={k,at:Date.now(),msg:msg||''}; renderSync(); }
+function renderSync(){
+  const el=$('sync-st'), k=syncSt.k;
+  el.textContent={off:'☁ 未開同步',idle:'☁ 同步中…',busy:'☁ 同步中…',ok:'☁ 已同步',denied:'☁ 尚未開通',offline:'☁ 離線',error:'☁ 同步失敗'}[k];
+  el.className='status'+(/denied|error/.test(k)?' bad':'');
+  el.title=k==='ok'?'雲端同步正常，最後同步 '+hm(new Date(syncSt.at).toISOString()):(syncSt.msg||'點一下看雲端同步設定');
+  renderCfg(); renderAlerts(); if(!cur) renderMonth();
+}
+// 頁面最上方的提醒：密碼被更換後的說明、目前密碼太弱要立刻換。正在打字時不重畫
+let _alertsSig=null;
+function renderAlerts(){
+  const el=$('alerts'); if(!el) return;
+  let h='';
+  if(!VIEW){
+    if(_notice==='pw') h+=`<div class="note warn">同步密碼已經更換，這台裝置上原本的資料已經清除。請到最下方「其他設定 → 雲端同步」輸入<b>新的</b>同步密碼，資料就會載回來。　<button class="btn mini ghost" data-act="notice-ok">知道了</button></div>`;
+    // 舊規則（8 個字、可純數字）時期設的密碼沒有 strong 標記：一律要求更換
+    if(sync&&!sync.strong) h+=`<div class="note bad"><b>⚠ 請立刻更換同步密碼。</b>現在這組密碼太容易被猜到——知道它的人只要在這個網站輸入，就能看到、也能修改全部人的點數。更換後舊密碼馬上作廢，已經用舊密碼登入的裝置也會被清掉資料。
+      <div class="row"><input type="password" id="top-newpw" placeholder="新密碼（至少 10 個字，英文＋數字）" autocomplete="new-password" style="flex:1;min-width:220px"><button class="btn" data-act="sync-chpw" data-src="top-newpw">更換密碼</button></div></div>`;
+  }
+  if(h===_alertsSig||(el.contains(document.activeElement)&&document.activeElement.tagName==='INPUT')) return;
+  _alertsSig=h; el.innerHTML=h;
+}
+function schedulePush(){ clearTimeout(_pushTimer); _pushTimer=setTimeout(()=>{ if(sync) syncNow(); publishViews(); },1200); }
+// 讀雲端 → 併進本機 → 本機有雲端沒有的再寫回去。離線或失敗時本機照常可用，下次同步再補
+async function syncNow(){
+  if(!sync) return;
+  if(_syncBusy){ _syncAgain=true; return; }
+  _syncBusy=true; if(syncSt.k!=='ok') setSync('busy');
+  try{
+    const blob=await cloudReq('GET');
+    if(blob&&blob.wipe){ wipeLocal(); return; }   // 這組密碼已經被更換作廢
+    let remote=null;
+    if(blob&&blob.data){ try{ remote=await unseal(blob); }catch(e){ throw new Error('雲端資料解不開'); } }
+    if(!remote&&sync.unverified){   // 金鑰是在雲端還沒開通時存的，現在才知道雲端上沒有這組密碼的資料
+      if(!confirmNewSpace()){ sync=null; try{ localStorage.removeItem(LS_SYNC); }catch(e){} setSync('off'); return; }
+    }
+    if(sync.unverified){ delete sync.unverified; localStorage.setItem(LS_SYNC,JSON.stringify(sync)); }
+    const hadUrl=!!sheetUrl();
+    let ch=!!(remote&&mergeRemote(remote));
+    if(applyDefaults()) ch=true;   // 先併完雲端再補預設值，才不會蓋掉別台裝置剛改的數字
+    if(ch){ saveState(true); renderAll(); }
+    const mine=buildPayload();
+    if(!remote||stable(mine)!==stable(remote)) await cloudReq('PUT',await seal(mine));
+    setSync('ok');
+    if(!hadUrl&&sheetUrl()) refresh(true);
+    if(ch) publishViews();   // 別台裝置改了點數或註記 → 個人查看的內容也要更新
+  }catch(e){
+    setSync(e.kind==='denied'?'denied':(navigator.onLine===false?'offline':'error'),(e&&e.message)||String(e));
+  }finally{
+    _syncBusy=false;
+    if(_syncAgain){ _syncAgain=false; setTimeout(syncNow,300); }
+  }
+}
+const confirmNewSpace=()=>confirm('雲端上還沒有用這組密碼存過的資料。\n\n・第一次開啟同步：按「確定」，會把這台裝置目前的設定與確認註記上傳。\n・已經在別台裝置開過同步：可能是密碼打錯了，請按「取消」重新輸入。');
+// 同步密碼就是整份資料的鑰匙：知道它的人看得到、也改得了全部人的點數。所以不收純數字或太短的密碼
+const strongPw=pw=>pw.length>=10&&/[A-Za-z]/.test(pw)&&/\d/.test(pw);
+const PW_RULE='同步密碼至少要 10 個字，而且要同時有英文字母和數字。\n請不要用科內大家都知道的號碼。';
+// 這組密碼被更換作廢了：清掉這台裝置上的資料與金鑰（個人查看代碼不動）
+function wipeLocal(){
+  try{ [LS,LS_SYNC,LS_UI].forEach(k=>localStorage.removeItem(k)); localStorage.setItem(LS_NOTICE,'pw'); }catch(e){}
+  location.reload();
+}
+async function changeSyncPw(pw){
+  pw=String(pw||'');
+  if(!sync) return;
+  if(!strongPw(pw)){ alert(PW_RULE); return; }
+  if(!confirm('更換同步密碼？\n\n・舊密碼立刻作廢\n・還在用舊密碼的裝置（包含您自己的其他手機、電腦）下次開啟時，上面的資料會被清掉，輸入新密碼才載得回來\n・個人查看連結不受影響')) return;
+  while(_syncBusy) await new Promise(r=>setTimeout(r,150));
+  await syncNow();   // 先把雲端上最新的內容併進來，才不會漏掉別台剛改的
+  if(!sync) return;
+  if(syncSt.k!=='ok'){ alert('目前連不上雲端，沒辦法更換密碼。請確認網路後再試一次。'); return; }
+  _syncBusy=true;
+  try{
+    const old={id:sync.id,key:sync.key}, nw=await deriveSync(pw);
+    if(nw.id===old.id){ alert('新密碼和現在的一樣。'); return; }
+    const ex=await cloudReq('GET',null,nw.id);
+    if(ex&&ex.wipe){ alert('這組密碼以前用過、已經作廢，請換一組新的。'); return; }
+    await cloudReq('PUT',await seal(buildPayload(),nw.key),nw.id);   // 先把資料放到新密碼底下
+    await cloudReq('PUT',{v:1,wipe:1,t:Date.now()},old.id);           // 再把舊密碼那一份換成作廢標記
+    sync={id:nw.id,key:nw.key,strong:1}; localStorage.setItem(LS_SYNC,JSON.stringify(sync));
+    if(document.activeElement&&document.activeElement.blur) document.activeElement.blur();
+    setSync('ok'); renderAlerts();
+    alert('同步密碼已經更換，舊密碼作廢了。\n\n您自己的其他裝置下次打開會要求輸入新密碼，輸入後資料就會載回來。');
+  }catch(e){ alert('更換沒有完成：'+((e&&e.message)||e)+'\n舊密碼目前仍然有效，請稍後再試一次。'); }
+  finally{ _syncBusy=false; }
+}
+async function enableSync(pw){
+  pw=String(pw||'');
+  if(!strongPw(pw)){ alert(PW_RULE); return; }
+  if(_syncBusy) return;
+  setSync('busy');
+  try{ sync=await deriveSync(pw); }
+  catch(e){ sync=null; setSync('off'); alert('這個瀏覽器無法使用加密功能，不能開啟雲端同步。'); return; }
+  let blob=null;
+  try{ blob=await cloudReq('GET'); }
+  catch(e){
+    if(e.kind==='denied'){   // 雲端規則還沒開：先記住金鑰，開通後自動開始同步
+      sync.unverified=1; sync.strong=1; localStorage.setItem(LS_SYNC,JSON.stringify(sync)); setSync('denied',e.message);
+      $('card-cfg').open=true; const h=$('sync-h'); if(h) h.scrollIntoView({block:'center'}); return;
+    }
+    sync=null; setSync('off'); alert('連不上雲端：'+((e&&e.message)||e)+'\n請確認網路後再試一次。'); return;
+  }
+  if(blob&&blob.wipe){ sync=null; setSync('off'); alert('這組密碼已經作廢。請輸入新的同步密碼。'); return; }
+  if(!(blob&&blob.data)&&!confirmNewSpace()){ sync=null; setSync('off'); return; }
+  sync.strong=1; localStorage.setItem(LS_SYNC,JSON.stringify(sync));
+  _notice=null; try{ localStorage.removeItem(LS_NOTICE); }catch(e){}
+  if(document.activeElement&&document.activeElement.blur) document.activeElement.blur();
+  await syncNow();
+}
+async function forceUpdate(){
+  if(navigator.onLine===false){ alert('目前離線，等有網路再更新。'); return; }
+  try{
+    if('serviceWorker' in navigator){ const rs=await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r=>r.unregister())); }
+    if(window.caches){ const ks=await caches.keys(); await Promise.all(ks.map(k=>caches.delete(k))); }
+  }catch(e){}
+  location.reload();
+}
+
+// ---------- 個人查看連結 ----------
+// 主任端：替某位專師建立連結後，把「算他點數需要的最少資料」加密放到雲端的獨立節點——試算表網址、專師那一半的
+// 每件點數（推廣／平分）、平分人數、他自己各月的確認註記。不含醫師點數、科部、品項點數，也不含別人的註記。
+// 專師端：用連結裡的金鑰解開，再自己即時讀試算表算出點數，所以主任沒開 App 時數字也會跟著試算表更新。
+const _pubHash={}, pubSt={};
+let _pubBusy=false,_pubAgain=false;
+// 連結帶 openExternalBrowser=1：在 LINE 裡點開時會直接交給手機的瀏覽器（LINE 內建瀏覽器不能加到主畫面）
+const viewUrl=tok=>(location.protocol==='file:'?PUBLIC_URL:location.origin+location.pathname.replace(/[^/]*$/,''))+'me.html?openExternalBrowser=1#me='+tok;
+const npRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={promo:Number(r.promo)||0,pool:Number(r.pool)||0}; }); return o; };
+function viewBlob(name){
+  const live=liveCfg(), months={};
+  Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm) return;
+    const m={}, rec=pm.paid&&pm.paid['n|'+name];
+    if(pm.cfg){ m.rates=npRates(pm.cfg.products); m.n=pm.cfg.sharers.length; m.inPool=pm.cfg.sharers.includes(name); }
+    if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
+    if(Object.keys(m).length) months[k]=m; });
+  return {v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),n:live.sharers.length,inPool:live.sharers.includes(name),months};
+}
+async function publishViews(){
+  if(VIEW||!window.crypto||!crypto.subtle) return;
+  const vs=state.cfg.views||{}; if(!Object.keys(vs).length) return;
+  if(_pubBusy){ _pubAgain=true; return; }
+  _pubBusy=true; let dirty=false;
+  for(const name of Object.keys(vs)){
+    const v=vs[name], p=v.tok&&parseViewTok(v.tok); if(!p) continue;
+    try{
+      if(v.del){ await cloudReq('DELETE',null,p.id); delete v.tok; delete _pubHash[p.id]; dirty=true; }
+      else if(sheetUrl()){
+        const b=viewBlob(name), h=stable(b);
+        if(_pubHash[p.id]!==h){ await cloudReq('PUT',await seal(b,p.key),p.id); _pubHash[p.id]=h; }
+        pubSt[name]='ok';
+      }
+    }catch(e){ pubSt[name]='err'; }
+  }
+  _pubBusy=false;
+  if(dirty) saveState();
+  renderCfg();
+  if(_pubAgain){ _pubAgain=false; setTimeout(publishViews,300); }
+}
+async function newView(name){
+  if(!sheetUrl()){ alert('要先設定試算表網址，才能建立查看連結。'); return; }
+  const old=state.cfg.views[name];
+  if(old&&old.tok&&!old.del){
+    if(!confirm(`替「${name}」換一條新的連結？\n舊的連結會立刻失效，要把新連結重新傳給他。`)) return;
+    try{ await cloudReq('DELETE',null,parseViewTok(old.tok).id); }
+    catch(e){ alert('連不上雲端，舊連結沒辦法停用，請稍後再試。'); return; }
+  }
+  const tok=b64(crypto.getRandomValues(new Uint8Array(48))).replace(/\+/g,'-').replace(/\//g,'_');
+  state.cfg.views[name]={tok,t:Date.now()};
+  saveState(); renderCfg(); await publishViews();
+  if(pubSt[name]==='err') alert('連結建立了，但目前連不上雲端、內容還沒放上去。連上網路後會自動補上，到時候連結才打得開。');
+}
+function viewsHtml(){
+  if(!window.crypto||!crypto.subtle) return '<div class="hint">這個瀏覽器不支援加密功能，無法建立查看連結。</div>';
+  const vs=state.cfg.views||{};
+  const names=[...new Set([...state.data.roster.np,...liveSharers(),...Object.keys(vs).filter(n=>!vs[n].del)])].filter(Boolean);
+  if(!names.length) return '<div class="hint">讀到試算表的專師名單後，這裡會列出可以建立連結的人。</div>';
+  return `<div class="hint">每個人一條專屬連結。打開後即時看到<b>自己的</b>推廣件數、推廣點數、平分與確認狀態，看不到別人的，也不能改任何東西。
+      拿到連結的人就看得到，請只傳給本人；外流或人員異動時按「停用」或「換一條新的」。</div>
+    <div class="tw"><table><thead><tr><th class="l">專師</th><th class="l">查看連結</th></tr></thead><tbody>`+
+    names.map(n=>{ const v=vs[n], on=v&&!v.del&&v.tok, k=esc(n);
+      return `<tr><td class="l"><b>${k}</b></td><td class="l" style="white-space:normal">${on
+        ?`<span class="tag ${pubSt[n]==='err'?'no':'ok'}">${pubSt[n]==='err'?'還沒放上雲端（連不上）':'✓ 已建立'}</span> <button class="btn mini" data-act="view-copy" data-n="${k}">複製連結</button> `+
+         `<button class="btn mini ghost" data-act="view-new" data-n="${k}">換一條新的</button> <button class="btn mini ghost" data-act="view-del" data-n="${k}">停用</button>`
+        :`<button class="btn mini outline" data-act="view-new" data-n="${k}">建立連結</button>`}</td></tr>`; }).join('')+'</tbody></table></div>';
+}
+// ---- 裝成手機 App（個人查看頁最下面的說明） ----
+let _installEvt=null;   // Android／電腦 Chrome 可以由網頁按鈕叫出安裝視窗；iPhone 只能請使用者自己「加入主畫面」
+window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); _installEvt=e; if(VIEW) renderAll(); });
+window.addEventListener('appinstalled',()=>{ _installEvt=null; if(VIEW) renderAll(); });
+function isStandalone(){ return !!(navigator.standalone||(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)); }
+function isIOS(){ return /iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1); }
+function inAppBrowser(){ return /\bLine\/|FBAN|FBAV|Instagram|MicroMessenger/i.test(navigator.userAgent); }
+function installHtml(){
+  if(isStandalone()) return '';   // 已經是從主畫面圖示開的
+  const box=(body)=>`<div class="card"><h2>📱 放到手機主畫面，當 App 用</h2><div class="hint" style="font-size:14px;line-height:1.9;margin:6px 0 0">${body}</div></div>`;
+  if(inAppBrowser()) return box('現在是在 LINE（或其他 App）內建的瀏覽器裡，這裡沒辦法加到主畫面。<br>請點<b>右上角的選單</b> →「<b>使用預設瀏覽器開啟</b>」（iPhone 是「在 Safari 中開啟」），再回到這一頁最下面看安裝方式。');
+  if(isIOS()) return box('① 點畫面下方（或上方）的<b>分享按鈕</b>（方框加一個向上的箭頭）<br>② 往下滑，點「<b>加入主畫面</b>」<br>③ 點右上角「<b>新增</b>」<br>之後從主畫面的圖示打開，就直接是你自己的點數。');
+  if(_installEvt) return box('<button class="btn" data-act="me-install">安裝成 App</button>　按下去之後，主畫面會多一個圖示，點它就直接是你自己的點數。');
+  return box('點瀏覽器<b>右上角的「⋮」</b> →「<b>加到主畫面</b>」或「<b>安裝應用程式</b>」。<br>之後從主畫面的圖示打開，就直接是你自己的點數。');
+}
+// ---- 專師端 ----
+// 把解開的內容套成一般的設定格式，之後照常用 calcMonth 算。平分名單只知道人數，用佔位名字補滿
+function applyView(b){
+  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]={doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0}; }); return o; };
+  const pool=(n,inPool)=>{ const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
+  state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
+  state.pay={};
+  Object.keys(b.months||{}).forEach(k=>{ const m=b.months[k], pm=state.pay[k]={paid:{}};
+    if(m.rates) pm.cfg={products:full(m.rates),sharers:pool(m.n,m.inPool)};
+    if(m.paid) pm.paid['n|'+b.name]={amt:m.paid.amt,at:m.paid.at,t:1}; });
+}
+async function loadView(){
+  if(!VIEW) return;
+  if(VIEW.none){ viewInfo=null; viewErr='none'; renderAll(); return; }
+  try{
+    const blob=await cloudReq('GET',null,VIEW.id);
+    let b=null;
+    if(blob&&blob.data){ try{ b=await unseal(blob,VIEW.key); }catch(e){ b=null; } }
+    if(!b){ viewInfo=null; viewErr='gone'; }
+    else{ const first=!viewInfo, sig=stable(b);
+      if(first||viewInfo.sig!==sig){ applyView(b); viewInfo={name:b.name,inPool:!!b.inPool,sig}; }
+      viewErr=null;
+      if(first){ renderAll(); refresh(true); return; }
+    }
+  }catch(e){ if(!viewInfo) viewErr='net'; }
+  renderAll();
+}
+function renderMe(ks){
+  ['card-rates','card-year','card-cfg','sync-st'].forEach(id=>{ $(id).style.display='none'; });
+  const top=$('month-top'), el=$('month-view'), name=viewInfo&&viewInfo.name;
+  // 標題固定「我的點數」；是誰的連結看月份後面的全名（使用者試過用名字最後一個字當標題，覺得不好看）
+  document.title='我的點數';
+  document.querySelector('header.top h1').textContent='我的點數';
+  const at=document.querySelector('meta[name="apple-mobile-web-app-title"]'); if(at) at.content='我的點數';   // 加到主畫面時的圖示名稱
+  $('btn-refresh').textContent='🔄 更新';
+  const blank=msg=>{ $('months').innerHTML=''; el.innerHTML=''; top.innerHTML=`<div class="card empty">${msg}</div>`; };
+  const paste=ph=>`<div class="row" style="justify-content:center;margin-top:14px"><input type="text" id="me-link" placeholder="${ph}" autocomplete="off" style="flex:0 1 320px"><button class="btn outline" data-act="me-paste">開啟</button></div>`;
+  if(!viewInfo) return blank(viewErr==='none'?'請打開主任傳給你的個人連結；或把那條連結貼在這裡。'+paste('貼上個人連結')
+    :viewErr==='gone'?'這個連結已經停用或不正確，請向主任索取新的連結。'+paste('拿到新連結後貼在這裡')
+    :viewErr?'目前連不上雲端，請確認網路後按右上角「更新」。':'載入中…');
+  if(!cur) return blank(busy?'讀取試算表中…':fail?'讀不到試算表，請稍後按右上角「更新」。':'目前還沒有紀錄。');
+  const pk='n|'+name;
+  const mine=k=>{ const c=calcMonth(k); return {c,p:people(c).find(x=>x.pk===pk)||{it:{},promo:0,share:0,amt:0,rec:paidOf(k)[pk]||null}}; };
+  const all=ks.map(k=>Object.assign({k},mine(k)));
+  let lastY=null;
+  $('months').innerHTML=all.map(({k,p})=>{ const [y,m]=k.split('-').map(Number);
+    const st=!p.amt&&!p.rec?'empty':p.rec&&p.rec.amt>=p.amt?'done':p.rec?'part':'none', lab=(y!==lastY?y+'年 ':'')+m+'月'; lastY=y;
+    return `<button class="mchip${k===cur?' on':''}" data-act="month" data-k="${k}"><i class="${st}"></i>${lab}</button>`; }).join('')+
+    '<span class="legend"><span><i style="background:#2eb872"></i>已確認</span><span><i style="background:#e2574c"></i>還沒確認</span></span>';
+  const {c,p}=all.find(x=>x.k===cur), pids=monthPids(c).filter(pid=>p.it[pid]), rows=c.rows.filter(r=>r.np===name);
+  const g={}; monthPids(c).forEach(pid=>{ const v=fmt(rateOf(c.cfg,pid).promo); (g[v]||(g[v]=[])).push(prodName(pid)); });
+  const promoTxt=Object.keys(g).map(v=>`${g[v].join('／')} ${v}`).join('、')||'—';
+  const paidTxt=p.rec?`<span class="tag ok">✓ 已確認 ${shortDate(p.rec.at)}　${fmt(p.rec.amt)} 點</span>`+
+      (p.rec.amt!==p.amt?`<div class="diff">確認之後又有新的紀錄：目前累計 ${fmt(p.amt)} 點，和已確認的差 ${fmt(p.amt-p.rec.amt)} 點，等主任再確認。</div>`:'')
+    :(p.amt?'<span class="tag no">尚未確認</span>':'<span class="mut">—</span>');
+  top.innerHTML=`<div class="mhead"><h2>${keyLabel(cur)}</h2><span class="mut">${esc(name)}</span></div>
+    <div class="tiles sales">
+      <div class="tile big"><div class="v">${fmt(p.amt)}</div><div class="l">這個月我的點數</div><div class="s">推廣 ${fmt(p.promo)}＋平分 ${fmt(p.share)}</div></div>
+      <div class="tile big"><div class="v">${sumVals(p.it)}</div><div class="l">我推廣的件數</div><div class="s">${rows.length} 位病人${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${p.it[pid]}`).join('・'):''}</div></div>
+    </div>
+    <div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
+      <div class="sub2">推廣點數＝自己推廣的件數 × 每件點數（${esc(promoTxt)}）。平分＝全體平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位${p.share||!c.pool?'':'（你不在平分名單內）'}。<br>
+      數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>`;
+  const each=r=>Object.keys(r.it).reduce((t,pid)=>t+r.it[pid]*rateOf(c.cfg,pid).promo,0);
+  el.innerHTML=`<details class="card sec" data-sec="me-rows"${isOpen('me-rows')?' open':''}><summary><span>這個月的推廣明細</span><span class="sum-amt">${rows.length} 筆</span></summary>
+      <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>推廣點數</th></tr></thead><tbody>`+
+      (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(r.doc)}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
+       '<tr><td class="l mut" colspan="5">這個月還沒有你推廣的紀錄</td></tr>')+`</tbody></table></div></details>
+    <div class="card"><h2>各月累計</h2><div class="tw"><table><thead><tr><th class="l">月份</th><th>推廣件數</th><th>推廣點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
+      all.map(({k,p})=>`<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td><td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`+
+        `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`).join('')+`</tbody></table></div></div>
+    ${installHtml()}
+    <div style="text-align:center;margin-top:8px"><button class="btn mini ghost" data-act="me-forget">在這台裝置移除這個連結</button></div>`;
+}
+
+// ---------- 事件 ----------
+function act(a,t,ev){
+  const k=t.dataset.k;
+  if(VIEW&&!/^(refresh|month|me-forget|me-install|me-paste)$/.test(a)) return;   // 個人查看模式只能看
+  if(a==='refresh'){ if(VIEW) loadView(); refresh(false); }
+  else if(a==='me-install'){ if(_installEvt){ const e=_installEvt; _installEvt=null; e.prompt(); } }
+  else if(a==='me-paste'){
+    const m=String(($('me-link')||{}).value||'').match(/me=([A-Za-z0-9_-]{64})/);
+    if(!m||!parseViewTok(m[1])){ alert('這看起來不是個人查看連結。\n請把主任傳給你的整條連結完整貼上（後面有一長串英數字）。'); return; }
+    if(VIEW_ONLY||location.protocol==='file:'){ try{ if(VIEW_ONLY) localStorage.setItem(LS_ME,m[1]); }catch(e){} location.hash='me='+m[1]; location.reload(); }
+    else location.href='me.html#me='+m[1];   // 個人查看一律走專用入口
+  }
+  else if(a==='me-forget'){
+    if(!confirm('在這台裝置移除這個連結？\n之後要再看，需要重新打開主任給的連結。')) return;
+    try{ localStorage.removeItem(LS_ME); }catch(e){} location.href=location.pathname;
+  }
+  else if(a==='view-new') newView(t.dataset.n);
+  else if(a==='view-del'){
+    const n=t.dataset.n, v=state.cfg.views[n]; if(!v||v.del) return;
+    if(!confirm(`停用「${n}」的查看連結？\n停用後那條連結立刻失效，之後可以再建立新的。`)) return;
+    state.cfg.views[n]={del:1,t:Date.now(),tok:v.tok}; saveState(); renderCfg(); publishViews();
+  }
+  else if(a==='view-copy'){
+    const v=state.cfg.views[t.dataset.n]; if(!v||!v.tok) return;
+    const url=viewUrl(v.tok), done=()=>{ const o=t.textContent; t.textContent='✓ 已複製'; setTimeout(()=>{ t.textContent=o; },1500); };
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done,()=>prompt('請複製這條連結：',url));
+    else prompt('請複製這條連結：',url);
+  }
+  else if(a==='month'){ cur=k; _mePicked=true; yearSel=null; renderAll(); window.scrollTo({top:0}); }
+  else if(a==='pay'||a==='repay') doPay(k);
+  else if(a==='unpay') doUnpay(k);
+  else if(a==='payall') doPayAll(t.dataset.role);
+  else if(a==='date'){ const r=state.pay[cur]&&state.pay[cur].paid[k]; if(r&&!r.del&&t.value){ r.at=t.value; r.t=Date.now(); saveState(); renderYear(); } }
+  else if(a==='resnap'){
+    if(!confirm(`${keyLabel(cur)}改用現在的設定重算？\n已經確認的點數不會變，若新算法的點數不同，會在該列提醒差額。`)) return;
+    state.pay[cur].cfg=clone(liveCfg()); state.pay[cur].cfgT=Date.now(); saveState(); renderAll();
+  }
+  else if(a==='detail') showDetail(k);
+  else if(a==='close') $('mask').classList.remove('on');
+  else if(a==='year'){ yearSel=t.value; renderYear(); }
+  else if(a==='print') printSheet();
+  else if(a==='csv') exportCsv();
+  else if(a==='rate'){
+    const pid=t.dataset.pid, f=t.dataset.f, rt=state.cfg.rates[pid]||(state.cfg.rates[pid]={});
+    if(t.value==='') delete rt[f]; else rt[f]=Math.max(0,Number(t.value)||0);
+    if(ev==='change') t.value=liveRates()[pid][f];   // 清空＝回到預設值；負數歸 0
+    state.cfg.tR=Date.now(); saveState(); refreshCfgRow(pid); renderMonths(allKeys()); renderMonth(); renderYear(); renderRatesNote();
+  }
+  else if(a==='rate-reset'){
+    if(!confirm('把每件點數全部恢復成這台電腦的預設值？')) return;
+    state.cfg.rates={}; state.cfg.tR=Date.now(); saveState(); renderAll();
+  }
+  else if(a==='sharer-add'){
+    const n=normName($('sharer-new').value); if(!n) return;
+    const sh=liveSharers(); if(sh.includes(n)){ alert('名單上已經有「'+n+'」'); return; }
+    sh.push(n); state.cfg.sharers=sh; state.cfg.tS=Date.now(); saveState(); $('sharer-new').value=''; document.activeElement.blur(); renderAll();
+  }
+  else if(a==='sharer-del'){
+    const n=t.dataset.n;
+    if(!confirm(`把「${n}」移出平分名單？\n（只影響還沒確認過的月份；他推廣的點數照算）`)) return;
+    state.cfg.sharers=liveSharers().filter(x=>x!==n); state.cfg.tS=Date.now(); saveState(); renderAll();
+  }
+  else if(a==='sharer-reset'){ state.cfg.sharers=null; state.cfg.tS=Date.now(); saveState(); renderAll(); }
+  else if(a==='url-save'){
+    const v=$('cfg-url').value.trim();
+    if(v&&!sheetId(v)){ alert('看起來不是 Google 試算表網址（應該長得像 https://docs.google.com/spreadsheets/d/…）'); return; }
+    if(v&&v!==window.COMMISSION_SHEET_URL) state.cfg.url=v; else delete state.cfg.url;
+    state.cfg.tU=Date.now(); saveState(); document.activeElement.blur(); refresh(false);
+  }
+  else if(a==='upload'){
+    const f=t.files&&t.files[0]; t.value=''; if(!f) return;
+    loadXLSX().then(()=>f.arrayBuffer()).then(buf=>{
+      const acc=parseWorkbook(XLSX.read(new Uint8Array(buf),{type:'array',cellDates:true}));
+      if(!Object.keys(acc.months).length){ alert('這個檔案裡找不到使用紀錄（需要有「專師」欄與品項數量欄的月份分頁）。'); return; }
+      mergeResult(acc,'upload'); fail=null; renderAll();
+    }).catch(e=>alert('讀取失敗：'+(e&&e.message||e)));
+  }
+  else if(a==='sync-on'){ const inp=$(t.dataset.src); if(inp) enableSync(inp.value); }
+  else if(a==='sync-now') syncNow();
+  else if(a==='sync-chpw'){ const inp=$(t.dataset.src); if(inp) changeSyncPw(inp.value).then(()=>{ if(sync&&sync.strong) inp.value=''; }); }
+  else if(a==='notice-ok'){ _notice=null; try{ localStorage.removeItem(LS_NOTICE); }catch(e){} renderAlerts(); }
+  else if(a==='sync-off'){
+    if(!confirm('在這台裝置關閉雲端同步？\n\n這台裝置上的資料會留著，雲端上的也不會被刪除；之後要再同步，重新輸入同一組密碼即可。')) return;
+    sync=null; try{ localStorage.removeItem(LS_SYNC); }catch(e){} setSync('off');
+  }
+  else if(a==='goto-sync'){ $('card-cfg').open=true; renderCfg(); const h=$('sync-h'); if(h) h.scrollIntoView({behavior:'smooth',block:'center'}); }
+  else if(a==='force-update') forceUpdate();
+  else if(a==='backup-export') download(`急診點數備份_${today().replace(/-/g,'')}.json`,JSON.stringify(state),'application/json');
+  else if(a==='backup-import'){
+    const f=t.files&&t.files[0]; t.value=''; if(!f) return;
+    f.text().then(txt=>{
+      let s; try{ s=JSON.parse(txt); }catch(e){ alert('這不是備份檔（讀不出 JSON）。'); return; }
+      if(!s||typeof s!=='object'||!s.pay||!s.cfg){ alert('這不是本系統的備份檔。'); return; }
+      const live=k=>Object.values((s.pay[k]&&s.pay[k].paid)||{}).filter(r=>r&&!r.del).length;
+      const n=Object.keys(s.pay).reduce((a,k)=>a+live(k),0);
+      if(!confirm(`匯入這份備份（${Object.keys(s.pay).filter(live).length} 個月、${n} 筆確認註記）？\n\n目前這台裝置上的設定與確認註記會被它整個取代。`)) return;
+      state=normState(s);
+      // 匯入的內容視為「現在改的」，開著雲端同步時才不會被雲端上較舊的蓋回去
+      const now=Date.now(); state.cfg.tR=state.cfg.tS=now; if(state.cfg.url) state.cfg.tU=now;
+      Object.values(state.pay).forEach(pm=>{ if(pm.cfgT) pm.cfgT=now; Object.values(pm.paid).forEach(r=>r.t=now); });
+      saveState(); cur=null; renderAll(); refresh(true);
+    });
+  }
+}
+document.addEventListener('click',e=>{
+  if(e.target===$('mask')){ $('mask').classList.remove('on'); return; }
+  const t=e.target.closest('[data-act]'); if(!t||t.tagName==='INPUT'||t.tagName==='SELECT') return;
+  act(t.dataset.act,t,'click');
+});
+document.addEventListener('change',e=>{ const t=e.target; if(t.dataset&&t.dataset.act&&(t.tagName==='INPUT'||t.tagName==='SELECT')) act(t.dataset.act,t,'change'); });
+// 點數邊打邊重算（不用等離開格子）
+document.addEventListener('input',e=>{ const t=e.target; if(t.dataset&&t.dataset.act==='rate') act('rate',t,'input'); });
+// 卡片收合／展開（toggle 不會冒泡，要用 capture）→ 記在這台裝置
+document.addEventListener('toggle',e=>{ const d=e.target;
+  if(!d.dataset||!d.dataset.sec||isOpen(d.dataset.sec)===d.open) return;   // 和已記的狀態相同（含剛畫出來時瀏覽器自動發的事件）就不用記
+  ui[d.dataset.sec]=d.open; try{ localStorage.setItem(LS_UI,JSON.stringify(ui)); }catch(_){}
+},true);
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape') $('mask').classList.remove('on');
+  if(e.key==='Enter'&&e.target.id==='sharer-new') act('sharer-add',e.target);
+  if(e.key==='Enter'&&e.target.id==='cfg-url') act('url-save',e.target);
+  if(e.key==='Enter'&&(e.target.id==='sync-pw'||e.target.id==='setup-pw')) enableSync(e.target.value);
+  if(e.key==='Enter'&&e.target.id==='me-link') act('me-paste',e.target);
+  if(e.key==='Enter'&&(e.target.id==='sync-newpw'||e.target.id==='top-newpw')) changeSyncPw(e.target.value);
+});
+// 已經開著 App 的分頁貼上個人連結只會換 # 後面、不會重新載入 → 手動重載才會進個人查看模式
+window.addEventListener('hashchange',()=>{ const m=location.hash.match(/[#&]me=([A-Za-z0-9_-]{64})/); if(m&&(!VIEW||VIEW.tok!==m[1])) location.reload(); });
+// 另一個分頁改了資料 → 這邊跟著更新
+window.addEventListener('storage',e=>{
+  if(VIEW) return;
+  if(e.key===LS){ state=loadState(); renderAll(); }
+  if(e.key===LS_SYNC){ try{ sync=JSON.parse(e.newValue||'null'); }catch(_){ sync=null; } setSync(sync?'idle':'off'); if(sync) syncNow(); }
+});
+// 回到視窗超過 1 分鐘沒讀過就補讀；開著時每 5 分鐘讀一次
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible') return;
+  if(VIEW) loadView();
+  if(Date.now()-(Date.parse(state.data.checked||0)||0)>60000) refresh(true);
+  if(sync) syncNow();
+});
+setInterval(()=>{ if(sync&&document.visibilityState==='visible') syncNow(); },60*1000);
+setInterval(()=>{ if(document.visibilityState==='visible') refresh(true); },5*60*1000);
+
+if(VIEW){
+  // 個人查看：先解開自己的資料（裡面有試算表網址），再讀試算表；之後每分鐘更新一次
+  renderAll();
+  loadView();
+  setInterval(()=>{ if(document.visibilityState==='visible'){ loadView(); refresh(true); } },60*1000);
+}else{
+  if(!sync&&applyDefaults()) saveState(true);
+  if(isOpen('rates')) $('card-rates').open=true;
+  renderAll();
+  renderSync();
+  refresh(true);
+  if(sync) syncNow();
+  setTimeout(publishViews,3000);   // 個人查看連結的內容每次開啟都重放一次（上次可能離線沒放成功）
+}
+</script>
+</body>
+</html>
