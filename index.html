@@ -219,7 +219,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，病歷號與病人姓名不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.04k';
+const APP_VER='2026.10.04l';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -259,7 +259,7 @@ const PRODUCTS=[
   {id:'glue',    name:'黏著劑',    re:/黏著|黏合/},
   {id:'repair',  name:'傷口修護液',re:/修護/},
 ];
-// 每一件的點數怎麼分：doc 醫師、promo 推廣的專師、pool 放進專師平分池、fund 科部（不屬於個人）；
+// 每一件的點數怎麼分：doc 醫師、promo 主要、pool 放進專師平分池、fund 科部（不屬於個人）；
 // price＝每件的品項點數，只用來算「品項總點數」，不影響每個人的點數
 const FIELDS=['doc','promo','pool','fund','price'];
 const ZERO={doc:0,promo:0,pool:0,fund:0,price:0};
@@ -679,19 +679,19 @@ const nameBtn=p=>p.name?`<button class="nm" data-act="detail" data-k="${esc(p.pk
   :`<button class="nm" data-act="detail" data-k="${esc(p.pk)}" style="color:var(--bad)">（未填${p.role==='d'?'醫師':'專師'}）</button>`;
 const qtd=(n,pid)=>n?`<td class="n q" data-l="${esc(prodName(pid))}">${n}</td>`:'<td class="z q">0</td>';
 function rateText(cfg,pids){
-  // 點數相同的品項併成一句：「品項A／品項B 每件：醫師 x、推廣專師 y、專師平分 z」
+  // 點數相同的品項併成一句：「品項A／品項B 每件：醫師 x、主要 y、專師平分 z」
   const g={};
-  pids.forEach(pid=>{ const r=rateOf(cfg,pid), s=`醫師 ${fmt(r.doc)}、推廣專師 ${fmt(r.promo)}、專師平分 ${fmt(r.pool)}${r.fund?`、科部 ${fmt(r.fund)}`:''}`; (g[s]||(g[s]=[])).push(prodName(pid)); });
+  pids.forEach(pid=>{ const r=rateOf(cfg,pid), s=`醫師 ${fmt(r.doc)}、主要 ${fmt(r.promo)}、專師平分 ${fmt(r.pool)}${r.fund?`、科部 ${fmt(r.fund)}`:''}`; (g[s]||(g[s]=[])).push(prodName(pid)); });
   return Object.keys(g).map(s=>`${g[s].join('／')} 每件：${s}`).join('；');
 }
 function monthWarnings(c,list){
   const w=[], D=state.data, sw=D.warn||{};
   const noNp=c.np['']?sumVals(c.np[''].it):0, noDoc=c.doc['']?sumVals(c.doc[''].it):0;
-  if(noNp) w.push(`有 ${noNp} 件沒填專師，推廣點數 ${fmt(c.np[''].promo)} 沒有對應的人——請回試算表補上再按更新。`);
+  if(noNp) w.push(`有 ${noNp} 件沒填專師，主要點數 ${fmt(c.np[''].promo)} 沒有對應的人——請回試算表補上再按更新。`);
   if(noDoc) w.push(`有 ${noDoc} 件沒填醫師，醫師點數 ${fmt(c.doc[''].amt)} 沒有對應的人——請回試算表補上再按更新。`);
   const known=new Set([...D.roster.np,...c.cfg.sharers]), knownD=new Set(D.roster.doc);
   const oddNp=Object.keys(c.np).filter(n=>n&&!known.has(n)&&sumVals(c.np[n].it));
-  if(oddNp.length&&known.size) w.push(`專師「${oddNp.join('、')}」不在名單上，請確認是不是打錯字（有推廣點數、但不參加平分）。`);
+  if(oddNp.length&&known.size) w.push(`專師「${oddNp.join('、')}」不在名單上，請確認是不是打錯字（有主要點數、但不參加平分）。`);
   const oddDoc=Object.keys(c.doc).filter(n=>n&&!knownD.has(n));
   if(oddDoc.length&&knownD.size) w.push(`醫師「${oddDoc.join('、')}」不在試算表統計頁的名單上，請確認是不是打錯字。`);
   const zr=Object.keys(c.zeroRate);
@@ -754,7 +754,7 @@ function renderMonth(){
   h+=`<div class="tiles">
     <div class="tile"><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div></div>
     <div class="tile"><div class="l">醫師點數合計</div><div class="v">${fmt(dTot)}</div><div class="s">${docs.filter(p=>p.amt>0).length} 位</div></div>
-    <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">推廣 ${fmt(promoTot)}＋平分 ${fmt(c.share*c.cfg.sharers.length)}</div></div>
+    <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">主要 ${fmt(promoTot)}＋平分 ${fmt(c.share*c.cfg.sharers.length)}</div></div>
     ${fp?`<div class="tile"><div class="l">科部</div><div class="v">${fmt(fp.amt)}</div><div class="s">不屬於個人</div></div>`:''}
     <div class="tile ${t.unpaid?'due':'ok'}"><div class="l">${t.unpaid?'還沒確認':'確認進度'}</div><div class="v">${t.unpaid?fmt(t.unpaid):(t.due?'全部確認':'—')}</div>
       <div class="s">已確認 ${fmt(t.paid)}／共 ${fmt(t.due)}${t.over?`（多 ${fmt(t.over)}）`:''}</div><div class="bar"><span style="width:${t.due?Math.min(100,t.paid/t.due*100):0}%"></span></div></div>
@@ -772,10 +772,10 @@ function renderMonth(){
     (dShow.length?dShow.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+3}">本月沒有紀錄</td></tr>`)+
     `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="amt">${fmt(dTot)}</td><td class="st"></td></tr></tbody></table></div>`);
   // 專師
-  h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`<div class="sec-head"><div class="hint">件數＝本人推廣的件數。平分：本月平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點（推廣的人自己也分得到）。</div>${allBtn('n','專師')}</div>
-    <div class="tw"><table class="ppl"><thead><tr><th class="l">專師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>推廣點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
-    (nps.length?nps.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="n sub" data-l="推廣">${fmt(p.promo)}</td><td class="n sub" data-l="＋平分">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
-    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="n sub" data-l="推廣">${fmt(promoTot)}</td><td class="n sub" data-l="＋平分">${fmt(nTot-promoTot)}</td><td class="amt">${fmt(nTot)}</td><td class="st"></td></tr></tbody></table></div>
+  h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`<div class="sec-head"><div class="hint">件數＝本人為主要的件數。平分：本月平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點（主要的人自己也分得到）。</div>${allBtn('n','專師')}</div>
+    <div class="tw"><table class="ppl"><thead><tr><th class="l">專師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>主要點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
+    (nps.length?nps.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="n sub" data-l="主要">${fmt(p.promo)}</td><td class="n sub" data-l="＋平分">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
+    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="n sub" data-l="主要">${fmt(promoTot)}</td><td class="n sub" data-l="＋平分">${fmt(nTot-promoTot)}</td><td class="amt">${fmt(nTot)}</td><td class="st"></td></tr></tbody></table></div>
     <div class="sub2">本月計算方式——${esc(rateText(c.cfg,pids.length?pids:PRODUCTS.map(p=>p.id)))}。</div>`);
   // 科部（不屬於個人的部分）
   if(fp){
@@ -824,7 +824,7 @@ function renderRates(){
   if(!(el.contains(document.activeElement)&&document.activeElement.tagName==='INPUT')){   // 正在打字就不重畫
     const rates=liveRates(), sh=liveSharers(), auto=!state.cfg.sharers, N=sh.length;
     el.innerHTML=`<div class="hint">白色格子都可以直接改（每一件的點數），改完下面的點數馬上重算。「品項點數」只用來算品項總點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
-    <div class="tw"><table><thead><tr><th class="l">品項</th><th>品項點數</th><th>醫師</th><th>推廣的專師</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
+    <div class="tw"><table><thead><tr><th class="l">品項</th><th>品項點數</th><th>醫師</th><th>主要</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
     productList().map(p=>{ const r=rates[p.id], d=rateDerived(r), id=esc(p.id);
       const inp=f=>`<td><input type="number" min="0" step="10" value="${r[f]}" data-act="rate" data-pid="${id}" data-f="${f}"></td>`;
       return `<tr data-row="${id}"><td class="l"><b>${esc(p.name)}</b></td>${inp('price')}${inp('doc')}${inp('promo')}${inp('pool')}${inp('fund')}<td class="n" data-c="each">${N?fmt2(r.pool/N):'—'}</td><td class="n" data-c="np">${fmt(d.np)}</td><td class="amt" data-c="all">${fmt(d.all)}</td></tr>`; }).join('')+
@@ -832,7 +832,7 @@ function renderRates(){
     <div id="rates-note"></div>
     <div class="row">${window.COMMISSION_DEFAULT_RATES?'<button class="btn mini ghost" data-act="rate-reset">↺ 點數全部恢復預設值</button>':''}
       <span class="mut" style="font-size:12.5px">修改只影響<b>還沒確認過</b>的月份；已經有確認紀錄的月份照當時的點數，不會被回頭改到。</span></div>
-    <h3>專師平分名單（目前 <span class="cfg-n">${N}</span> 位，「其餘專師平分」的點數由這些人均分，推廣的人自己也分得到）</h3>
+    <h3>專師平分名單（目前 <span class="cfg-n">${N}</span> 位，「其餘專師平分」的點數由這些人均分，主要的人自己也分得到）</h3>
     <div class="chips">${sh.map(n=>`<span class="chip">${esc(n)}<button title="移出名單" data-act="sharer-del" data-n="${esc(n)}">×</button></span>`).join('')||'<span class="mut">（空的）</span>'}</div>
     <div class="row"><input type="text" id="sharer-new" placeholder="新增姓名" style="width:130px"><button class="btn mini outline" data-act="sharer-add">＋加入</button>
       ${auto?'<span class="mut" style="font-size:12.5px">目前跟著試算表「統計」頁的專師名單</span>':'<button class="btn mini ghost" data-act="sharer-reset">↺ 改回跟著試算表統計頁名單</button>'}</div>`;
@@ -896,11 +896,11 @@ function showDetail(pk){
   const role=pk[0], name=pk.slice(2), c=calcMonth(cur), f=role==='d'?'doc':'np';
   const rows=c.rows.filter(r=>r[f]===name), p=people(c).find(x=>x.pk===pk)||{amt:0,promo:0,share:0};
   const each=r=>Object.keys(r.it).reduce((s,pid)=>s+r.it[pid]*((c.cfg.products[pid]||ZERO)[role==='d'?'doc':'promo']),0);
-  $('dlg').innerHTML=`<h2>${esc(name||'（未填姓名）')}・${keyLabel(cur)}${role==='d'?'醫師點數':'專師推廣'}明細<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    <div class="hint">${rows.length} 筆，${role==='d'?`點數合計 ${fmt(p.amt)}`:`推廣點數 ${fmt(p.promo)}＋平分 ${fmt(p.share)}＝${fmt(p.amt)}`}。「序」對應試算表該分頁的序號。</div>
-    <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">${role==='d'?'推廣專師':'醫師'}</th><th>${role==='d'?'點數':'推廣點數'}</th></tr></thead><tbody>`+
+  $('dlg').innerHTML=`<h2>${esc(name||'（未填姓名）')}・${keyLabel(cur)}${role==='d'?'醫師點數':'專師主要'}明細<button class="btn mini ghost" data-act="close">關閉</button></h2>
+    <div class="hint">${rows.length} 筆，${role==='d'?`點數合計 ${fmt(p.amt)}`:`主要點數 ${fmt(p.promo)}＋平分 ${fmt(p.share)}＝${fmt(p.amt)}`}。「序」對應試算表該分頁的序號。</div>
+    <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">${role==='d'?'主要專師':'醫師'}</th><th>${role==='d'?'點數':'主要點數'}</th></tr></thead><tbody>`+
     (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(role==='d'?r.np:r.doc)||'<span style="color:var(--bad)">未填</span>'}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
-     '<tr><td class="l mut" colspan="5">沒有本人推廣的紀錄（只有平分）</td></tr>')+'</tbody></table></div>';
+     '<tr><td class="l mut" colspan="5">沒有本人為主要的紀錄（只有平分）</td></tr>')+'</tbody></table></div>';
   $('mask').classList.add('on');
 }
 
@@ -952,10 +952,10 @@ function printSheet(){
     <table><thead><tr><th class="l">姓名</th>${th}<th>點數</th><th>確認日</th><th>簽名</th></tr></thead><tbody>
     ${docs.map(p=>`<tr><td class="l">${esc(p.name)}</td>${q(p)}<td>${fmt(p.amt)}</td><td>${paidAt(p)}</td><td class="sig"></td></tr>`).join('')}</tbody></table>
     <h2>專科護理師（合計 ${fmt(sum(nps))} 點）</h2>
-    <table><thead><tr><th class="l">姓名</th>${th}<th>推廣點數</th><th>平分</th><th>點數</th><th>確認日</th><th>簽名</th></tr></thead><tbody>
+    <table><thead><tr><th class="l">姓名</th>${th}<th>主要點數</th><th>平分</th><th>點數</th><th>確認日</th><th>簽名</th></tr></thead><tbody>
     ${nps.map(p=>`<tr><td class="l">${esc(p.name)}</td>${q(p)}<td>${fmt(p.promo)}</td><td>${fmt(p.share)}</td><td>${fmt(p.amt)}</td><td>${paidAt(p)}</td><td class="sig"></td></tr>`).join('')}</tbody></table>
     ${fund?`<h2>科部（不屬於個人）：${fmt(fund.amt)} 點${fund.rec?`　確認日 ${paidAt(fund)}`:''}</h2>`:''}
-    <div class="pf">計算方式：${esc(rateText(c.cfg,pids))}。<br>專師平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點${c.poolLeft?`（餘 ${fmt(c.poolLeft)} 點）`:''}。件數為本人看診（醫師）或推廣（專師）之件數。</div>
+    <div class="pf">計算方式：${esc(rateText(c.cfg,pids))}。<br>專師平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點${c.poolLeft?`（餘 ${fmt(c.poolLeft)} 點）`:''}。件數為本人看診（醫師）或主要（專師）之件數。</div>
     <div class="sign"><span>製表：＿＿＿＿＿＿</span><span>主任：＿＿＿＿＿＿</span></div>`;
   window.print();
 }
@@ -967,7 +967,7 @@ function exportCsv(){
   if(!cur) return;
   const c=calcMonth(cur), list=people(c).filter(p=>p.amt>0||p.rec||sumVals(p.it)), pids=monthPids(c);
   const q=v=>{ const s=String(v==null?'':v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
-  const lines=[['月份','身分','姓名',...pids.map(pid=>prodName(pid)+'件數'),'醫師點數','推廣點數','平分','合計點數','確認點數','確認日']];
+  const lines=[['月份','身分','姓名',...pids.map(pid=>prodName(pid)+'件數'),'醫師點數','主要點數','平分','合計點數','確認點數','確認日']];
   list.forEach(p=>lines.push([keyLabel(cur),({d:'醫師',n:'專師',f:'科部'})[p.role],p.name||'（未填）',...pids.map(pid=>p.it[pid]||0),
     p.role==='d'?p.amt:'',p.role==='n'?p.promo:'',p.role==='n'?p.share:'',p.amt,p.rec?p.rec.amt:'',p.rec?p.rec.at:'']));
   download(`急診點數_${cur}.csv`,'\ufeff'+lines.map(l=>l.map(q).join(',')).join('\r\n'),'text/csv;charset=utf-8');
@@ -1203,7 +1203,7 @@ async function forceUpdate(){
 
 // ---------- 個人查看連結 ----------
 // 主任端：替某位專師建立連結後，把「算他點數需要的最少資料」加密放到雲端的獨立節點——試算表網址、專師那一半的
-// 每件點數（推廣／平分）、平分人數、他自己各月的確認註記。不含醫師點數、科部、品項點數，也不含別人的註記。
+// 每件點數（主要／平分）、平分人數、他自己各月的確認註記。不含醫師點數、科部、品項點數，也不含別人的註記。
 // 專師端：用連結裡的金鑰解開，再自己即時讀試算表算出點數，所以主任沒開 App 時數字也會跟著試算表更新。
 const _pubHash={}, pubSt={};
 let _pubBusy=false,_pubAgain=false;
@@ -1258,7 +1258,7 @@ function viewsHtml(){
   const vs=state.cfg.views||{};
   const names=[...new Set([...state.data.roster.np,...liveSharers(),...Object.keys(vs).filter(n=>!vs[n].del)])].filter(Boolean);
   if(!names.length) return '<div class="hint">讀到試算表的專師名單後，這裡會列出可以建立連結的人。</div>';
-  return `<div class="hint">每個人一條專屬連結。打開後即時看到<b>自己的</b>推廣件數、推廣點數、平分與確認狀態，看不到別人的，也不能改任何東西。
+  return `<div class="hint">每個人一條專屬連結。打開後即時看到<b>自己的</b>主要件數、主要點數、平分與確認狀態，看不到別人的，也不能改任何東西。
       拿到連結的人就看得到，請只傳給本人；外流或人員異動時按「停用」或「換一條新的」。</div>
     <div class="tw"><table><thead><tr><th class="l">專師</th><th class="l">查看連結</th></tr></thead><tbody>`+
     names.map(n=>{ const v=vs[n], on=v&&!v.del&&v.tok, k=esc(n);
@@ -1332,25 +1332,32 @@ function renderMe(ks){
     return `<button class="mchip${k===cur?' on':''}" data-act="month" data-k="${k}"><i class="${st}"></i>${lab}</button>`; }).join('')+
     '<span class="legend"><span><i style="background:#2eb872"></i>已確認</span><span><i style="background:#e2574c"></i>還沒確認</span></span>';
   const {c,p}=all.find(x=>x.k===cur), pids=monthPids(c).filter(pid=>p.it[pid]), rows=c.rows.filter(r=>r.np===name);
-  const g={}; monthPids(c).forEach(pid=>{ const v=fmt(rateOf(c.cfg,pid).promo); (g[v]||(g[v]=[])).push(prodName(pid)); });
-  const promoTxt=Object.keys(g).map(v=>`${g[v].join('／')} ${v}`).join('、')||'—';
+  // 點數說明：這個月適用的各品項每件點數（主要＝負責那一件的人拿的；平分＝每件另外給全體平分名單均分的）
+  const N=c.cfg.sharers.length;
+  const expl=[...new Set([...productList().map(x=>x.id),...Object.keys(c.cfg.products||{})])]
+    .map(pid=>({pid,r:rateOf(c.cfg,pid)})).filter(x=>x.r.promo||x.r.pool);
   const paidTxt=p.rec?`<span class="tag ok">✓ 已確認 ${shortDate(p.rec.at)}　${fmt(p.rec.amt)} 點</span>`+
       (p.rec.amt!==p.amt?`<div class="diff">確認之後又有新的紀錄：目前累計 ${fmt(p.amt)} 點，和已確認的差 ${fmt(p.amt-p.rec.amt)} 點，等主任再確認。</div>`:'')
     :(p.amt?'<span class="tag no">尚未確認</span>':'<span class="mut">—</span>');
   top.innerHTML=`<div class="mhead"><h2>${keyLabel(cur)}</h2><span class="mut">${esc(name)}</span></div>
     <div class="tiles sales">
-      <div class="tile big"><div class="v">${fmt(p.amt)}</div><div class="l">這個月我的點數</div><div class="s">推廣 ${fmt(p.promo)}＋平分 ${fmt(p.share)}</div></div>
-      <div class="tile big"><div class="v">${sumVals(p.it)}</div><div class="l">我推廣的件數</div><div class="s">${rows.length} 位病人${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${p.it[pid]}`).join('・'):''}</div></div>
+      <div class="tile big"><div class="v">${fmt(p.amt)}</div><div class="l">這個月我的點數</div><div class="s">主要 ${fmt(p.promo)}＋平分 ${fmt(p.share)}</div></div>
+      <div class="tile big"><div class="v">${sumVals(p.it)}</div><div class="l">我的主要件數</div><div class="s">${rows.length} 位病人${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${p.it[pid]}`).join('・'):''}</div></div>
     </div>
     <div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
-      <div class="sub2">推廣點數＝自己推廣的件數 × 每件點數（${esc(promoTxt)}）。平分＝全體平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位${p.share||!c.pool?'':'（你不在平分名單內）'}。<br>
-      數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>`;
+      <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>
+    <div class="card"><h2>點數說明</h2>
+      <div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>主要</th><th>平分</th><th>平分每人（÷${N} 位）</th></tr></thead><tbody>`+
+      (expl.map(x=>`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.promo)}</td><td class="n">${fmt(x.r.pool)}</td><td class="n">${N?fmt2(x.r.pool/N):'—'}</td></tr>`).join('')||
+       '<tr><td class="l mut" colspan="4">還沒有設定</td></tr>')+`</tbody></table></div>
+      <div class="sub2"><b>主要</b>：這一件由你主要負責時，你得到的點數。<b>平分</b>：每一件另外提供、由平分名單上的 ${N} 位均分的點數，不管是誰主要，名單上每個人都有${p.share||!c.pool?'':'（你目前不在平分名單內）'}。<br>
+      這個月：主要 ${fmt(p.promo)} 點（自己主要的件數 × 上表的主要點數）＋平分 ${fmt(p.share)} 點（全體平分池 ${fmt(c.pool)} 點 ÷ ${N} 位）＝ ${fmt(p.amt)} 點。</div></div>`;
   const each=r=>Object.keys(r.it).reduce((t,pid)=>t+r.it[pid]*rateOf(c.cfg,pid).promo,0);
-  el.innerHTML=`<details class="card sec" data-sec="me-rows"${isOpen('me-rows')?' open':''}><summary><span>這個月的推廣明細</span><span class="sum-amt">${rows.length} 筆</span></summary>
-      <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>推廣點數</th></tr></thead><tbody>`+
+  el.innerHTML=`<details class="card sec" data-sec="me-rows"${isOpen('me-rows')?' open':''}><summary><span>這個月的主要明細</span><span class="sum-amt">${rows.length} 筆</span></summary>
+      <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>主要點數</th></tr></thead><tbody>`+
       (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(r.doc)}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
-       '<tr><td class="l mut" colspan="5">這個月還沒有你推廣的紀錄</td></tr>')+`</tbody></table></div></details>
-    <div class="card"><h2>各月累計</h2><div class="tw"><table><thead><tr><th class="l">月份</th><th>推廣件數</th><th>推廣點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
+       '<tr><td class="l mut" colspan="5">這個月還沒有你為主要的紀錄</td></tr>')+`</tbody></table></div></details>
+    <div class="card"><h2>各月累計</h2><div class="tw"><table><thead><tr><th class="l">月份</th><th>主要件數</th><th>主要點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
       all.map(({k,p})=>`<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td><td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`+
         `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`).join('')+`</tbody></table></div></div>
     ${installHtml()}
@@ -1417,7 +1424,7 @@ function act(a,t,ev){
   }
   else if(a==='sharer-del'){
     const n=t.dataset.n;
-    if(!confirm(`把「${n}」移出平分名單？\n（只影響還沒確認過的月份；他推廣的點數照算）`)) return;
+    if(!confirm(`把「${n}」移出平分名單？\n（只影響還沒確認過的月份；他的主要點數照算）`)) return;
     state.cfg.sharers=liveSharers().filter(x=>x!==n); state.cfg.tS=Date.now(); saveState(); renderAll();
   }
   else if(a==='sharer-reset'){ state.cfg.sharers=null; state.cfg.tS=Date.now(); saveState(); renderAll(); }
