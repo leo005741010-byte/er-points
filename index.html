@@ -226,7 +226,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.04p';
+const APP_VER='2026.10.04q';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -432,12 +432,20 @@ const todayKey=()=>{ const d=new Date(); return `${d.getFullYear()-1911}-${pad(d
 // 今天新增的紀錄（看當月分頁裡日期是今天的列）與它們的點數
 function todayInfo(){
   const d=new Date(), key=todayKey(), md=`${d.getMonth()+1}/${d.getDate()}`, c=calcMonth(key), live=ratesFor(key);
-  const t={key,md,c,rows:c.rows.filter(r=>r.d===md),each:[],units:0,total:0,doc:0,promo:0,pool:0,fund:0};
-  t.rows.forEach(r=>{ let sum=0;
+  const t={key,md,c,live,rows:c.rows.filter(r=>r.d===md),each:[],units:0,sales:0,promo:0,pool:0};
+  t.rows.forEach(r=>{ let sum=0;   // each＝這一筆的品項點數（件數×品項點數）
     Object.keys(r.it).forEach(pid=>{ const q=r.it[pid], rt=rateOf(c.cfg,pid,live);
-      t.units+=q; t.doc+=q*rt.doc; t.promo+=q*rt.promo; t.pool+=q*rt.pool; t.fund+=q*rt.fund; sum+=q*(rt.doc+rt.promo+rt.pool+rt.fund); });
-    t.each.push(sum); t.total+=sum; });
+      t.units+=q; t.promo+=q*rt.promo; t.pool+=q*rt.pool; sum+=q*rt.price; });
+    t.each.push(sum); t.sales+=sum; });
   return t;
+}
+// 某位專師今天增加的點數＝自己主要的＋平分多分到的（今天全體讓平分池變大，每人跟著多的那一份）
+function todayMine(name){
+  const t=todayInfo(), c=t.c, N=c.cfg.sharers.length;
+  const rows=t.rows.filter(r=>r.np===name), each=rows.map(r=>Object.keys(r.it).reduce((x,pid)=>x+r.it[pid]*rateOf(c.cfg,pid,t.live).promo,0));
+  const promo=each.reduce((a,b)=>a+b,0);
+  const share=N&&c.cfg.sharers.includes(name)?c.share-Math.floor((c.pool-t.pool)/N):0;   // 用「現在每人的平分」減「不含今天時每人的平分」，和月合計對得起來
+  return {t,rows,each,promo,share,total:promo+share,N,inPool:c.cfg.sharers.includes(name)};
 }
 function defaultKey(){
   const ks=allKeys(); if(!ks.length) return null;
@@ -783,7 +791,7 @@ function renderMonth(){
   const dl=pc&&pc.sales?(c.sales-pc.sales)/pc.sales*100:null;
   if(cur===todayKey()){
     const t=todayInfo();
-    h+=`<button class="today" data-act="today"><span class="tl">今日增加<small>${t.md}</small></span><span class="tv">${fmt(t.total)}<small> 點</small></span>
+    h+=`<button class="today" data-act="today"><span class="tl">今日增加的品項總點數<small>${t.md}</small></span><span class="tv">${fmt(t.sales)}<small> 點</small></span>
       <span class="tr">${t.rows.length?`${t.units} 件・${t.rows.length} 筆　看明細 ›`:'今天還沒有新增'}</span></button>`;
   }
   h+=`<div class="tiles sales">
@@ -957,14 +965,28 @@ function refreshCfgRow(pid){
 
 // ---------- 今日明細 ----------
 function showToday(){
+  if(VIEW) return showTodayMine();
   const t=todayInfo(), [y,m]=t.key.split('-').map(Number), day=t.md.split('/')[1];
   $('dlg').innerHTML=`<h2>今日明細（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    <div class="hint">今天新增 ${t.rows.length} 筆、${t.units} 件，總點數 ${fmt(t.total)} 點（醫師 ${fmt(t.doc)}＋主要 ${fmt(t.promo)}＋平分 ${fmt(t.pool)}${t.fund?`＋科部 ${fmt(t.fund)}`:''}）。「序」對應試算表該分頁的序號。</div>
-    <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th class="l">主要</th><th>總點數</th></tr></thead><tbody>`+
+    <div class="hint">今天新增 ${t.rows.length} 筆、${t.units} 件，品項總點數 ${fmt(t.sales)} 點。「序」對應試算表該分頁的序號。</div>
+    <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th class="l">主要</th><th>品項點數</th></tr></thead><tbody>`+
     (t.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td>`+
       `<td class="l">${esc(r.doc)||'<span style="color:var(--bad)">未填</span>'}</td><td class="l">${esc(r.np)||'<span style="color:var(--bad)">未填</span>'}</td><td class="n">${fmt(t.each[i])}</td></tr>`).join('')||
      '<tr><td class="l mut" colspan="5">今天還沒有新增的紀錄</td></tr>')+
-    (t.rows.length?`<tr class="tot"><td class="l" colspan="4">合計</td><td class="amt">${fmt(t.total)}</td></tr>`:'')+'</tbody></table></div>';
+    (t.rows.length?`<tr class="tot"><td class="l" colspan="4">合計</td><td class="amt">${fmt(t.sales)}</td></tr>`:'')+'</tbody></table></div>';
+  $('mask').classList.add('on');
+}
+// 專師個人頁的今日明細：只列本人主要的那幾筆，平分只給合計（不列別人的紀錄）
+function showTodayMine(){
+  if(!viewInfo) return;
+  const me=todayMine(viewInfo.name), t=me.t, [y,m]=t.key.split('-').map(Number), day=t.md.split('/')[1];
+  $('dlg').innerHTML=`<h2>今日明細（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
+    <div class="hint">今天增加 ${fmt(me.total)} 點＝主要 ${fmt(me.promo)} 點＋平分 ${fmt(me.share)} 點。</div>
+    <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>主要點數</th></tr></thead><tbody>`+
+    (me.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(r.doc)}</td><td class="n">${fmt(me.each[i])}</td></tr>`).join('')||
+     '<tr><td class="l mut" colspan="4">今天還沒有你為主要的紀錄</td></tr>')+
+    (me.rows.length?`<tr class="tot"><td class="l" colspan="3">主要合計</td><td class="amt">${fmt(me.promo)}</td></tr>`:'')+`</tbody></table></div>
+    <div class="sub2"><b>平分</b>：今天全體新增 ${t.units} 件，平分池增加 ${fmt(t.pool)} 點，由 ${me.N} 位均分${me.inPool?`，你增加 ${fmt(me.share)} 點`:'（你目前不在平分名單內）'}。</div>`;
   $('mask').classList.add('on');
 }
 
@@ -1419,7 +1441,10 @@ function renderMe(ks){
   const paidTxt=p.rec?`<span class="tag ok">✓ 已確認 ${shortDate(p.rec.at)}　${fmt(p.rec.amt)} 點</span>`+
       (p.rec.amt!==p.amt?`<div class="diff">確認之後又有新的紀錄：目前累計 ${fmt(p.amt)} 點，和已確認的差 ${fmt(p.amt-p.rec.amt)} 點，等主任再確認。</div>`:'')
     :(p.amt?'<span class="tag no">尚未確認</span>':'<span class="mut">—</span>');
+  const me=cur===todayKey()?todayMine(name):null;
   top.innerHTML=`<div class="mhead"><h2>${keyLabel(cur)}</h2><span class="mut">${esc(name)}</span></div>
+    ${me?`<button class="today" data-act="today"><span class="tl">今日增加<small>${me.t.md}</small></span><span class="tv">${fmt(me.total)}<small> 點</small></span>
+      <span class="tr">主要 ${fmt(me.promo)}＋平分 ${fmt(me.share)}　看明細 ›</span></button>`:''}
     <div class="tiles sales">
       <div class="tile big"><div class="v">${fmt(p.amt)}</div><div class="l">這個月我的點數</div><div class="s">主要 ${fmt(p.promo)}＋平分 ${fmt(p.share)}</div></div>
       <div class="tile big"><div class="v">${sumVals(p.it)}</div><div class="l">我的主要件數</div><div class="s">${rows.length} 筆${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${p.it[pid]}`).join('・'):''}</div></div>
@@ -1447,7 +1472,7 @@ function renderMe(ks){
 // ---------- 事件 ----------
 function act(a,t,ev){
   const k=t.dataset.k;
-  if(VIEW&&!/^(refresh|month|me-forget|me-install|me-paste)$/.test(a)) return;   // 個人查看模式只能看
+  if(VIEW&&!/^(refresh|month|today|close|me-forget|me-install|me-paste)$/.test(a)) return;   // 個人查看模式只能看
   if(a==='refresh'){ if(VIEW) loadView(); refresh(false); }
   else if(a==='me-install'){ if(_installEvt){ const e=_installEvt; _installEvt=null; e.prompt(); } }
   else if(a==='me-paste'){
