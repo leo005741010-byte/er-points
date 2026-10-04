@@ -219,7 +219,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，病歷號與病人姓名不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.04j';
+const APP_VER='2026.10.04k';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -246,7 +246,9 @@ const VIEW=(()=>{
     return (tok||saved?parseViewTok(tok||saved):null)||{none:true};
   }
   if(location.protocol==='file:') return tok?parseViewTok(tok):null;   // 本機檔沒辦法用 me.html，維持舊做法（只有主任自己會這樣開）
-  if(tok||(saved&&!own)){ location.replace('me.html'+(tok?'#me='+tok:'')); return {none:true}; }
+  // 只有網址帶著個人代碼才轉去 me.html。這台裝置只是「記著」某個人的代碼時不自動轉——
+  // 主任在自己的裝置上試開過專師連結的話，會變成一打開就是那位專師的頁面、找不到登入的地方
+  if(tok){ location.replace('me.html#me='+tok); return {none:true}; }
   return null;
 })();
 let _notice=null; if(!VIEW){ try{ _notice=localStorage.getItem(LS_NOTICE); }catch(e){} }
@@ -715,12 +717,16 @@ function setupHtml(){
     <b>① 電腦那邊還沒上傳</b>——請在電腦上用原本的方式打開這個程式（資料夾裡的 index.html），到最下方「其他設定 → 雲端同步」輸入<b>同一組密碼</b>；已經輸入過的話，把它打開放著一分鐘即可。完成後回到這裡按下面的按鈕。<br>
     <b>② 兩邊的密碼不一樣</b>——到最下方「其他設定」按「在這台裝置關閉同步」，再重新輸入一次。</div>
     <div class="row"><button class="btn" data-act="sync-now">重新從雲端載入</button></div></div></div>`;
-  return `<div class="card"><div class="setup"><h2>要看自己的點數</h2>
+  // 這一頁（index.html）是主任用的，所以主任的登入放最上面；專師平常走自己的個人連結（me.html），這裡只留備用入口
+  let savedMe=false; try{ savedMe=!!localStorage.getItem(LS_ME); }catch(e){}
+  return `<div class="card"><div class="setup"><h2>主任：看全部人的點數</h2>
+    <div class="hint">輸入<b>同步密碼</b>，這台裝置就會載入全部人的資料。</div>
+    <div class="row"><input type="password" id="setup-pw" placeholder="同步密碼" autocomplete="off" style="flex:1;min-width:180px"><button class="btn" data-act="sync-on" data-src="setup-pw">載入全部資料</button></div>
+    <div class="hint" style="margin-top:10px">從來沒設定過的話：到最下方「其他設定」貼上試算表網址。</div></div></div>
+    <div class="card"><div class="setup"><h2 style="font-size:15px;color:var(--mut)">專師：只看自己的點數</h2>
     <div class="hint">請打開主任傳給你的個人連結；或把那條連結貼在這裡。</div>
-    <div class="row"><input type="text" id="me-link" placeholder="貼上個人連結" autocomplete="off" style="flex:1;min-width:180px"><button class="btn" data-act="me-paste">開啟</button></div></div></div>
-    <div class="card"><div class="setup"><h2 style="font-size:15px;color:var(--mut)">管理者（主任）</h2>
-    <div class="hint">已經在別台裝置開過雲端同步：輸入同步密碼，設定與確認註記就會載進來。從來沒設定過：到最下方「其他設定」貼上試算表網址。</div>
-    <div class="row"><input type="password" id="setup-pw" placeholder="同步密碼" autocomplete="off" style="flex:1;min-width:180px"><button class="btn outline" data-act="sync-on" data-src="setup-pw">載入</button></div></div></div>`;
+    <div class="row"><input type="text" id="me-link" placeholder="貼上個人連結" autocomplete="off" style="flex:1;min-width:180px"><button class="btn outline" data-act="me-paste">開啟</button>
+      ${savedMe?'<button class="btn outline" data-act="me-open">開啟我的點數</button>':''}</div></div></div>`;
 }
 function renderMonth(){
   const top=$('month-top'), el=$('month-view');
@@ -1363,6 +1369,7 @@ function act(a,t,ev){
     if(VIEW_ONLY||location.protocol==='file:'){ try{ if(VIEW_ONLY) localStorage.setItem(LS_ME,m[1]); }catch(e){} location.hash='me='+m[1]; location.reload(); }
     else location.href='me.html#me='+m[1];   // 個人查看一律走專用入口
   }
+  else if(a==='me-open') location.href='me.html';
   else if(a==='me-forget'){
     if(!confirm('在這台裝置移除這個連結？\n之後要再看，需要重新打開主任給的連結。')) return;
     try{ localStorage.removeItem(LS_ME); }catch(e){} location.href=location.pathname;
