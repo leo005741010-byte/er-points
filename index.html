@@ -121,6 +121,7 @@ td.st{text-align:left;min-width:250px}
 #rates-view input[type=number]{width:104px;font-size:15px;font-weight:700;color:var(--navy-dark);border-color:#8fb1d6;background:#fbfdff}
 #rates-view td,#rates-view th{padding-top:6px;padding-bottom:6px}
 #rates-note .note{margin:10px 0 0}
+#rates-view input.chg{border-color:#f2a541;background:#fff8ea}
 h3{font-size:14px;color:var(--navy-dark);margin:18px 0 8px;border-left:3px solid var(--navy);padding-left:8px}
 h3:first-child{margin-top:0}
 input[type=number],input[type=text],input[type=url]{font:inherit;font-size:14px;border:1px solid #c7d2df;border-radius:6px;padding:4px 8px}
@@ -216,10 +217,10 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 資料存在各裝置的 localStorage；要跨裝置就開「雲端同步」，上傳前先用同步密碼加密（見下方「雲端同步」）。
 // 本檔會公開在網站上，所以不含任何姓名、點數、試算表網址：
 //   ・姓名來自試算表；試算表網址與預設點數放本機的 sheet-config.js（不上傳）或由雲端同步取得。
-// 只下載 序／日期／品項數量／專師／醫師 欄，病歷號與病人姓名不下載、不儲存。
+// 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.04l';
+const APP_VER='2026.10.04m';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -434,7 +435,7 @@ function classify(label){
   const s=normLabel(label); if(!s) return null;
   if(/^(序|序號|編號)$/.test(s)) return {kind:'seq'};
   if(/日期/.test(s)) return {kind:'date'};
-  if(/病歷|姓名|身分/.test(s)) return {kind:'phi'};        // 病人個資欄：不下載
+  if(/病歷|姓名|身分/.test(s)) return {kind:'phi'};        // 個資欄：不下載
   if(/專師|專科護理|^NP$/i.test(s)) return {kind:'np'};
   if(/醫師/.test(s)) return {kind:'doc'};
   const p=PRODUCTS.find(p=>p.re.test(s)); if(p) return {kind:'prod',pid:p.id};
@@ -742,14 +743,14 @@ function renderMonth(){
     <span class="r"><button class="btn outline" data-act="print">🖨 列印確認清冊</button><button class="btn outline" data-act="csv">⬇ 匯出 CSV</button></span></div>`;
   const w=monthWarnings(c,list);
   if(w.length) h+=`<div class="note warn"><ul>${w.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
-  // 品項概況：總點數＝各品項件數×品項點數；一筆紀錄算一位病人
+  // 品項概況：總點數＝各品項件數×品項點數；筆數＝有品項的紀錄數
   const pk=shiftKey(cur,-1), pc=state.data.months[pk]?calcMonth(pk):null;
   const dl=pc&&pc.sales?(c.sales-pc.sales)/pc.sales*100:null;
   h+=`<div class="tiles sales">
     <div class="tile big"><div class="v">${fmt(c.sales)}</div><div class="l">品項總點數</div>
       <div class="s">${dl==null?'沒有上個月的資料可比':`較上月 <span class="${dl>=0?'up':'dn'}">${dl>=0?'▲ +':'▼ '}${dl.toFixed(1)}%</span>`}</div></div>
     <div class="tile big"><div class="v">${c.units}</div><div class="l">總件數</div>
-      <div class="s">${c.rows.length} 位病人${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${c.prod[pid]}`).join('・'):''}</div></div>
+      <div class="s">${c.rows.length} 筆${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${c.prod[pid]}`).join('・'):''}</div></div>
   </div>`;
   h+=`<div class="tiles">
     <div class="tile"><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div></div>
@@ -818,17 +819,34 @@ function renderYear(){
     `<tr class="tot"><td class="l">合計</td>${mks.map(k=>`<td class="n">${fmt(colTot[k].due)}</td>`).join('')}<td class="amt">${fmt(gDue)}</td><td class="n">${fmt(Math.max(0,gDue-gPaid))}</td></tr></tbody></table></div>`;
 }
 function rateDerived(r){ return {np:r.promo+r.pool,all:r.doc+r.promo+r.pool+r.fund}; }
-// 每件點數＋平分名單：放在每月畫面正上方，改了下面的醫師／專師點數立刻重算
+// 每件點數＋平分名單：放在每月畫面正上方。
+// 格子裡改的數字先放在 rateDraft（草稿），按「儲存」才寫進設定、重算、同步出去——
+// 專師的個人頁會即時顯示這些點數，所以不讓打到一半的數字直接生效。
+let rateDraft={};   // {品項:{欄位:輸入框裡的字}}
+const draftDirty=()=>Object.keys(rateDraft).length>0;
+function draftRates(){   // 已儲存的點數套上草稿，只給表格右邊的試算欄用
+  const o=liveRates();
+  Object.keys(rateDraft).forEach(pid=>{ if(!o[pid]) return;
+    Object.keys(rateDraft[pid]).forEach(f=>{ const v=rateDraft[pid][f]; o[pid][f]=v===''?(Number(defRate(pid)[f])||0):Math.max(0,Number(v)||0); }); });
+  return o;
+}
+function renderRateSave(){
+  const el=$('rates-save'); if(!el) return;
+  el.innerHTML=draftDirty()?`<div class="note warn" style="margin:10px 0 0"><b>有還沒儲存的修改。</b>按「儲存」才會生效；在那之前，下面的點數和專師個人頁看到的都還是原本的數字。
+    <div class="row"><button class="btn" data-act="rate-save">儲存</button><button class="btn outline" data-act="rate-cancel">取消修改</button></div></div>`:'';
+}
 function renderRates(){
   const el=$('rates-view');
   if(!(el.contains(document.activeElement)&&document.activeElement.tagName==='INPUT')){   // 正在打字就不重畫
-    const rates=liveRates(), sh=liveSharers(), auto=!state.cfg.sharers, N=sh.length;
-    el.innerHTML=`<div class="hint">白色格子都可以直接改（每一件的點數），改完下面的點數馬上重算。「品項點數」只用來算品項總點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
+    const saved=liveRates(), rates=draftRates(), sh=liveSharers(), auto=!state.cfg.sharers, N=sh.length;
+    el.innerHTML=`<div class="hint">白色格子可以改（每一件的點數），<b>改完要按「儲存」才會生效</b>。「品項點數」只用來算品項總點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
     <div class="tw"><table><thead><tr><th class="l">品項</th><th>品項點數</th><th>醫師</th><th>主要</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
     productList().map(p=>{ const r=rates[p.id], d=rateDerived(r), id=esc(p.id);
-      const inp=f=>`<td><input type="number" min="0" step="10" value="${r[f]}" data-act="rate" data-pid="${id}" data-f="${f}"></td>`;
+      const dr=rateDraft[p.id]||{};
+      const inp=f=>`<td><input type="number" min="0" step="10" value="${f in dr?esc(dr[f]):saved[p.id][f]}"${f in dr?' class="chg"':''} data-act="rate" data-pid="${id}" data-f="${f}"></td>`;
       return `<tr data-row="${id}"><td class="l"><b>${esc(p.name)}</b></td>${inp('price')}${inp('doc')}${inp('promo')}${inp('pool')}${inp('fund')}<td class="n" data-c="each">${N?fmt2(r.pool/N):'—'}</td><td class="n" data-c="np">${fmt(d.np)}</td><td class="amt" data-c="all">${fmt(d.all)}</td></tr>`; }).join('')+
     `</tbody></table></div>
+    <div id="rates-save"></div>
     <div id="rates-note"></div>
     <div class="row">${window.COMMISSION_DEFAULT_RATES?'<button class="btn mini ghost" data-act="rate-reset">↺ 點數全部恢復預設值</button>':''}
       <span class="mut" style="font-size:12.5px">修改只影響<b>還沒確認過</b>的月份；已經有確認紀錄的月份照當時的點數，不會被回頭改到。</span></div>
@@ -837,7 +855,7 @@ function renderRates(){
     <div class="row"><input type="text" id="sharer-new" placeholder="新增姓名" style="width:130px"><button class="btn mini outline" data-act="sharer-add">＋加入</button>
       ${auto?'<span class="mut" style="font-size:12.5px">目前跟著試算表「統計」頁的專師名單</span>':'<button class="btn mini ghost" data-act="sharer-reset">↺ 改回跟著試算表統計頁名單</button>'}</div>`;
   }
-  renderRatesNote();
+  renderRateSave(); renderRatesNote();
 }
 // 目前看的月份已有確認紀錄、且照當時設定算出來的點數和現行設定不同 → 在點數卡裡說明，並給「這個月也改用新數字」的按鈕
 function renderRatesNote(){
@@ -854,7 +872,7 @@ function renderCfg(){
     <h3>個人查看連結（專師只看得到自己的點數）</h3>${viewsHtml()}
     <h3>試算表</h3>
     <div class="row"><input type="url" id="cfg-url" style="flex:1;min-width:260px" placeholder="https://docs.google.com/spreadsheets/d/…" value="${esc(sheetUrl())}"><button class="btn mini outline" data-act="url-save">儲存並更新</button></div>
-    <div class="hint" style="margin-top:6px">只讀取 序／日期／各品項數量／專師／醫師 欄，病歷號與病人姓名不會下載。試算表若改成不公開，可改用
+    <div class="hint" style="margin-top:6px">只讀取 序／日期／各品項數量／專師／醫師 欄，其他欄位不會下載。試算表若改成不公開，可改用
       <label style="color:var(--navy);cursor:pointer;text-decoration:underline">上傳下載的 xlsx<input type="file" accept=".xlsx" style="display:none" data-act="upload"></label>（Google 試算表：檔案 → 下載 → Microsoft Excel）。</div>
     <h3>備份</h3>
     <div class="row"><button class="btn mini outline" data-act="backup-export">⬇ 匯出備份檔</button>
@@ -884,7 +902,7 @@ function syncHtml(){
 const fmt2=n=>Number.isInteger(n)?fmt(n):n.toLocaleString('en-US',{maximumFractionDigits:2});
 // 改點數時只更新該列的試算欄，不整塊重畫（重畫會讓正在 Tab 的輸入框失焦）
 function refreshCfgRow(pid){
-  const r=liveRates()[pid], N=liveSharers().length, tr=[...document.querySelectorAll('#rates-view tr[data-row]')].find(t=>t.dataset.row===pid);
+  const r=draftRates()[pid], N=liveSharers().length, tr=[...document.querySelectorAll('#rates-view tr[data-row]')].find(t=>t.dataset.row===pid);
   if(!tr||!r) return; const d=rateDerived(r);
   tr.querySelector('[data-c=each]').textContent=N?fmt2(r.pool/N):'—';
   tr.querySelector('[data-c=np]').textContent=fmt(d.np);
@@ -1342,16 +1360,16 @@ function renderMe(ks){
   top.innerHTML=`<div class="mhead"><h2>${keyLabel(cur)}</h2><span class="mut">${esc(name)}</span></div>
     <div class="tiles sales">
       <div class="tile big"><div class="v">${fmt(p.amt)}</div><div class="l">這個月我的點數</div><div class="s">主要 ${fmt(p.promo)}＋平分 ${fmt(p.share)}</div></div>
-      <div class="tile big"><div class="v">${sumVals(p.it)}</div><div class="l">我的主要件數</div><div class="s">${rows.length} 位病人${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${p.it[pid]}`).join('・'):''}</div></div>
+      <div class="tile big"><div class="v">${sumVals(p.it)}</div><div class="l">我的主要件數</div><div class="s">${rows.length} 筆${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${p.it[pid]}`).join('・'):''}</div></div>
     </div>
     <div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
       <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>
-    <div class="card"><h2>點數說明</h2>
+    <details class="card sec" data-sec="me-expl"${isOpen('me-expl')?' open':''}><summary><span>點數說明</span></summary>
       <div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>主要</th><th>平分</th><th>平分每人（÷${N} 位）</th></tr></thead><tbody>`+
       (expl.map(x=>`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.promo)}</td><td class="n">${fmt(x.r.pool)}</td><td class="n">${N?fmt2(x.r.pool/N):'—'}</td></tr>`).join('')||
        '<tr><td class="l mut" colspan="4">還沒有設定</td></tr>')+`</tbody></table></div>
       <div class="sub2"><b>主要</b>：這一件由你主要負責時，你得到的點數。<b>平分</b>：每一件另外提供、由平分名單上的 ${N} 位均分的點數，不管是誰主要，名單上每個人都有${p.share||!c.pool?'':'（你目前不在平分名單內）'}。<br>
-      這個月：主要 ${fmt(p.promo)} 點（自己主要的件數 × 上表的主要點數）＋平分 ${fmt(p.share)} 點（全體平分池 ${fmt(c.pool)} 點 ÷ ${N} 位）＝ ${fmt(p.amt)} 點。</div></div>`;
+      這個月：主要 ${fmt(p.promo)} 點（自己主要的件數 × 上表的主要點數）＋平分 ${fmt(p.share)} 點（全體平分池 ${fmt(c.pool)} 點 ÷ ${N} 位）＝ ${fmt(p.amt)} 點。</div></details>`;
   const each=r=>Object.keys(r.it).reduce((t,pid)=>t+r.it[pid]*rateOf(c.cfg,pid).promo,0);
   el.innerHTML=`<details class="card sec" data-sec="me-rows"${isOpen('me-rows')?' open':''}><summary><span>這個月的主要明細</span><span class="sum-amt">${rows.length} 筆</span></summary>
       <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>主要點數</th></tr></thead><tbody>`+
@@ -1408,14 +1426,27 @@ function act(a,t,ev){
   else if(a==='print') printSheet();
   else if(a==='csv') exportCsv();
   else if(a==='rate'){
-    const pid=t.dataset.pid, f=t.dataset.f, rt=state.cfg.rates[pid]||(state.cfg.rates[pid]={});
-    if(t.value==='') delete rt[f]; else rt[f]=Math.max(0,Number(t.value)||0);
-    if(ev==='change') t.value=liveRates()[pid][f];   // 清空＝回到預設值；負數歸 0
-    state.cfg.tR=Date.now(); saveState(); refreshCfgRow(pid); renderMonths(allKeys()); renderMonth(); renderYear(); renderRatesNote();
+    // 只記進草稿，按「儲存」才生效；改回原本的數字＝沒有修改
+    const pid=t.dataset.pid, f=t.dataset.f, d=rateDraft[pid]||(rateDraft[pid]={});
+    if(t.value!==''&&Number(t.value)===liveRates()[pid][f]) delete d[f]; else d[f]=t.value;
+    if(!Object.keys(d).length) delete rateDraft[pid];
+    t.classList.toggle('chg',!!(rateDraft[pid]&&f in rateDraft[pid]));
+    refreshCfgRow(pid); renderRateSave();
+  }
+  else if(a==='rate-save'){
+    if(!draftDirty()) return;
+    Object.keys(rateDraft).forEach(pid=>{ const rt=state.cfg.rates[pid]||(state.cfg.rates[pid]={});
+      Object.keys(rateDraft[pid]).forEach(f=>{ const v=rateDraft[pid][f]; if(v==='') delete rt[f]; else rt[f]=Math.max(0,Number(v)||0); }); });   // 清空＝回到預設值；負數歸 0
+    rateDraft={}; state.cfg.tR=Date.now(); saveState();
+    if(document.activeElement&&document.activeElement.blur) document.activeElement.blur();
+    renderAll();
+  }
+  else if(a==='rate-cancel'){
+    rateDraft={}; if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); renderAll();
   }
   else if(a==='rate-reset'){
     if(!confirm('把每件點數全部恢復成這台電腦的預設值？')) return;
-    state.cfg.rates={}; state.cfg.tR=Date.now(); saveState(); renderAll();
+    rateDraft={}; state.cfg.rates={}; state.cfg.tR=Date.now(); saveState(); renderAll();
   }
   else if(a==='sharer-add'){
     const n=normName($('sharer-new').value); if(!n) return;
@@ -1475,7 +1506,7 @@ document.addEventListener('click',e=>{
   act(t.dataset.act,t,'click');
 });
 document.addEventListener('change',e=>{ const t=e.target; if(t.dataset&&t.dataset.act&&(t.tagName==='INPUT'||t.tagName==='SELECT')) act(t.dataset.act,t,'change'); });
-// 點數邊打邊重算（不用等離開格子）
+// 點數表邊打邊更新右邊的試算欄與「還沒儲存」的提示（按儲存才真的生效）
 document.addEventListener('input',e=>{ const t=e.target; if(t.dataset&&t.dataset.act==='rate') act('rate',t,'input'); });
 // 卡片收合／展開（toggle 不會冒泡，要用 capture）→ 記在這台裝置
 document.addEventListener('toggle',e=>{ const d=e.target;
@@ -1490,6 +1521,8 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&e.target.id==='me-link') act('me-paste',e.target);
   if(e.key==='Enter'&&(e.target.id==='sync-newpw'||e.target.id==='top-newpw')) changeSyncPw(e.target.value);
 });
+// 點數表有還沒儲存的修改時，關掉或重新整理前先提醒
+window.addEventListener('beforeunload',e=>{ if(!VIEW&&draftDirty()){ e.preventDefault(); e.returnValue=''; } });
 // 已經開著 App 的分頁貼上個人連結只會換 # 後面、不會重新載入 → 手動重載才會進個人查看模式
 window.addEventListener('hashchange',()=>{ const m=location.hash.match(/[#&]me=([A-Za-z0-9_-]{64})/); if(m&&(!VIEW||VIEW.tok!==m[1])) location.reload(); });
 // 另一個分頁改了資料 → 這邊跟著更新
