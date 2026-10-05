@@ -243,7 +243,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.05d';
+const APP_VER='2026.10.05e';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -1024,7 +1024,7 @@ function pieCard(title,parts){
 
 // ---------- 逐月趨勢（點大數字磚跳出折線圖）----------
 function meOf(k){ const pk='n|'+(viewInfo?viewInfo.name:''), c=calcMonth(k); return people(c).find(x=>x.pk===pk)||{it:{},promo:0,share:0,amt:0}; }
-// 試算表開始記錄以前的月份（cfg.hist）：cost＝當時報表上的原始總點數；it＝用原始點數反推出來的各品項件數，只用來估品項總點數、總點數與總點數差。
+// 試算表開始記錄以前的月份（cfg.hist）：cost＝當時報表上的原始總點數；it＝用原始點數反推出來的各品項件數，用來估總件數、品項總點數、總點數與總點數差。
 // 只出現在折線圖；試算表已經有分頁的月份一律以試算表為準
 const histOf=k=>{ const h=(state.cfg.hist||{})[k]; return h&&!h.del&&!state.data.months[k]?h:null; };
 const histCost=k=>Number(histOf(k).cost)||0;
@@ -1033,7 +1033,7 @@ const histVendor=k=>{ const it=histOf(k).it||{}, r=ratesFor(k); return Object.ke
 // hist＝更早的月份怎麼算（沒有就只畫試算表有的月份）；est＝更早月份的值是推估的（圖上畫空心點、虛線）
 const TREND={
   sales:  {title:'品項總點數',  unit:'點', get:k=>calcMonth(k).sales, hist:k=>histSales(k), est:1},
-  units:  {title:'總件數',      unit:'件', get:k=>calcMonth(k).units},
+  units:  {title:'總件數',      unit:'件', get:k=>calcMonth(k).units, hist:k=>sumVals(histOf(k).it), est:1},
   vendor: {title:'總點數',      unit:'點', get:k=>calcMonth(k).vendor, hist:histVendor, est:1},
   cost:   {title:'原始總點數',  unit:'點', get:k=>calcMonth(k).cost, hist:histCost},
   diff:   {title:'總點數差',    unit:'點', get:k=>{ const c=calcMonth(k); return c.sales-c.cost; }, hist:k=>histSales(k)-histCost(k), est:1},
@@ -1091,10 +1091,11 @@ function showTrend(m){
     ${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
     <div class="tw"><table><thead><tr><th class="l">月份</th><th>${T.title}</th><th>較上月</th></tr></thead><tbody>`+
     pts.map((p,i)=>{ const pv=i>0&&pts[i-1].k===shiftKey(p.k,-1)?pts[i-1].v:null, d=pv==null?null:pctVs(p.v,pv);
-      return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${p.e&&(m==='vendor'||m==='sales')?`<div class="estit">推估件數：${itTxt(p.k)}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}</td><td class="n">${d==null?'—':pctHtml(d)}</td></tr>`; }).join('')+
+      return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${p.e&&m!=='diff'?`<div class="estit">推估件數：${itTxt(p.k)}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}</td><td class="n">${d==null?'—':pctHtml(d)}</td></tr>`; }).join('')+
     `</tbody></table></div>
     <div class="sub2">每個月一個點；橘色是目前正在看的月份。這個月還沒過完時，數字會比完整的月份低。</div>`+
-    (anyH?`<div class="sub2">${T.est?'標「推估」的月份沒有逐筆紀錄：是拿當時報表上的原始總點數，用各品項的原始點數反推件數，再換算出來的，只能當參考（圖上是空心點、虛線）。':'標「報表」的月份是試算表開始記錄以前的，用的是當時報表上的數字。'}</div>`:'');
+    (anyH?`<div class="sub2">${T.est?'標「推估」的月份沒有逐筆紀錄：是拿當時報表上的原始總點數，用各品項的原始點數反推件數，再換算出來的，只能當參考（圖上是空心點、虛線）。':'標「報表」的月份是試算表開始記錄以前的，用的是當時報表上的數字。'}</div>`:
+     T.hist&&!VIEW?'<div class="sub2">試算表開始記錄以前的月份還沒帶進這台裝置：在電腦上開一次本機版，確認頁尾顯示「☁ 已同步」，這裡就會出現。</div>':'');
   $('mask').classList.add('on');
 }
 
