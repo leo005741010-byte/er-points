@@ -245,7 +245,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.05f';
+const APP_VER='2026.10.05g';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -469,14 +469,16 @@ function todayMine(name){
   const share=N&&c.cfg.sharers.includes(name)?c.share-Math.floor((c.pool-t.pool)/N):0;   // 用「現在每人的平分」減「不含今天時每人的平分」，和月合計對得起來
   return {t,rows,each,promo,share,total:promo+share,N,inPool:c.cfg.sharers.includes(name)};
 }
-// 這個月 1 日到今天，每天各加了多少（val(r)＝這一筆要算的值）。沒有日期或日期不在這個月的列算在 1 日（odd）；日期在今天之後的不算（late）
-function dailySums(t,val){
-  const mm=+t.key.split('-')[1], D=+t.md.split('/')[1], sum=new Array(D+1).fill(0); let odd=0, late=0;
-  t.c.rows.forEach(r=>{ const m=String(r.d||'').match(/^(\d+)\/(\d+)$/), ok=!!m&&+m[1]===mm&&+m[2]>=1;
+// 某個月每天各加了多少（val(r,c)＝這一筆要算的值）：當月算到今天，其他月份算到月底。
+// 沒有日期或日期不在這個月的列算在 1 日（odd）；日期在今天之後的不算（late）
+function dailySums(key,val){
+  const c=calcMonth(key), [yy,mm]=key.split('-').map(Number), isNow=key===todayKey();
+  const D=isNow?new Date().getDate():new Date(yy+1911,mm,0).getDate(), sum=new Array(D+1).fill(0); let odd=0, late=0;
+  c.rows.forEach(r=>{ const m=String(r.d||'').match(/^(\d+)\/(\d+)$/), ok=!!m&&+m[1]===mm&&+m[2]>=1&&(isNow||+m[2]<=D);
     if(ok&&+m[2]>D){ late++; return; }
     if(!ok) odd++;
-    sum[ok?+m[2]:1]+=val(r); });
-  return {sum,D,mm,odd,late};
+    sum[ok?+m[2]:1]+=val(r,c); });
+  return {c,key,sum,D,mm,isNow,odd,late};
 }
 function defaultKey(){
   const ks=allKeys(); if(!ks.length) return null;
@@ -1089,7 +1091,7 @@ function lineSvg(pts,curKey,day){
     const tick=day?(n<=16||i===0||i===n-1||((i+1)%5===0&&n-1-i>1)?p.k:''):mm+'月';
     const anc=n>1&&i===0?'start':n>1&&i===n-1?'end':'middle', lx=x(i)+(anc==='start'?4:anc==='end'?-4:0), lw=fmt(p.v).length*6.4;
     const ly=show?labelY(anc==='start'?lx:anc==='end'?lx-lw:lx-lw/2,y(p.v),lw):0;
-    g+=`<circle cx="${x(i)}" cy="${y(p.v)}" r="${on?5.5:n>16?2.8:4}" fill="${on?'#f2a541':p.e?'#fff':'#1a4a7a'}" stroke="${p.e&&!on?'#1a4a7a':'#fff'}" stroke-width="${p.e&&!on?2:1.5}"/>`+
+    g+=(day&&n>16&&!on&&i!==n-1?'':`<circle cx="${x(i)}" cy="${y(p.v)}" r="${on?5.5:4}" fill="${on?'#f2a541':p.e?'#fff':'#1a4a7a'}" stroke="${p.e&&!on?'#1a4a7a':'#fff'}" stroke-width="${p.e&&!on?2:1.5}"/>`)+
       (show?`<text x="${lx}" y="${ly}" text-anchor="${anc}" font-size="11" font-weight="700" fill="${on?'#a85800':'#12355a'}" stroke="#fff" stroke-width="3" paint-order="stroke">${fmt(p.v)}</text>`:'')+
       (tick!==''?`<text x="${x(i)}" y="${H-B+16}" text-anchor="middle" font-size="11" fill="#1f2d3d">${tick}</text>`:'')+
       (day?(i===0?`<text x="${x(i)}" y="${H-B+30}" text-anchor="middle" font-size="10" fill="#6b7a8c">${day}月</text>`:''):
@@ -1097,12 +1099,34 @@ function lineSvg(pts,curKey,day){
     lastY=yy; });
   return `<svg class="trend" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
 }
+// 逐日累進（品項總點數／我的點數這兩塊磚點下去時，放在逐月趨勢上面）：正在看的那個月，1 日起每天累計到多少
+const rowVal=(r,c,live,f)=>Object.keys(r.it).reduce((x,pid)=>x+r.it[pid]*rateOf(c.cfg,pid,live)[f],0);
+const CUM={
+  sales:key=>{ const live=ratesFor(key), ds=dailySums(key,(r,c)=>rowVal(r,c,live,'price')), cum=[0];
+    for(let d=1;d<=ds.D;d++) cum[d]=cum[d-1]+ds.sum[d];
+    return {ds,cum}; },
+  // 我的點數＝到那天為止自己主要的＋到那天為止每人的平分（和月合計同一個算法，所以最後一點等於那個月我的點數）
+  myamt:key=>{ const live=ratesFor(key), name=viewInfo?viewInfo.name:'', ds=dailySums(key,(r,c)=>r.np===name?rowVal(r,c,live,'promo'):0);
+    const pool=dailySums(key,(r,c)=>rowVal(r,c,live,'pool')).sum, N=ds.c.cfg.sharers.length, inPool=ds.c.cfg.sharers.includes(name), cum=[0];
+    for(let d=1,a=0,b=0;d<=ds.D;d++){ a+=ds.sum[d]; b+=pool[d]; cum[d]=a+(inPool&&N?Math.floor(b/N):0); }
+    return {ds,cum}; },
+};
+function cumHtml(m){
+  if(!CUM[m]||!cur||!state.data.months[cur]) return '';
+  const {ds,cum}=CUM[m](cur), pts=[]; for(let d=1;d<=ds.D;d++) pts.push({k:d,v:cum[d]});
+  const notes=[]; if(ds.isNow) notes.push('這個月還沒過完，畫到今天（橘色那一點）');
+  if(ds.odd) notes.push(`有 ${ds.odd} 筆沒有日期（或日期不在這個月），算在 1 日`); if(ds.late) notes.push(`有 ${ds.late} 筆的日期在今天之後，沒有畫進來`);
+  return `<div class="cumh">${keyLabel(cur)}・逐日累進<small>${ds.mm}月1日～${ds.D}日</small></div>${lineSvg(pts,ds.isNow?ds.D:-1,ds.mm)}`+
+    `<div class="sub2" style="margin-top:0">從 1 日起每天累計到多少；換月份（最下面那一條）再點進來，就是那個月的。${notes.length?notes.join('；')+'。':''}</div>
+    <div class="cumh">逐月趨勢</div>`;
+}
 function showTrend(m){
   const T=TREND[m]; if(!T||(VIEW&&!/^my/.test(m))) return;
   const pts=trendPts(m), anyH=pts.some(p=>p.h);
   const itTxt=k=>{ const it=histOf(k).it||{}; return Object.keys(it).filter(pid=>it[pid]).map(pid=>`${esc(prodName(pid))} ${it[pid]}`).join('・'); };
-  $('dlg').innerHTML=`<h2>${T.title}・逐月趨勢<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    ${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
+  const cumH=cumHtml(m);
+  $('dlg').innerHTML=`<h2>${T.title}${cumH?'':'・逐月趨勢'}<button class="btn mini ghost" data-act="close">關閉</button></h2>
+    ${cumH}${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
     <div class="tw"><table><thead><tr><th class="l">月份</th><th>${T.title}</th><th>較上月</th></tr></thead><tbody>`+
     pts.map((p,i)=>{ const pv=i>0&&pts[i-1].k===shiftKey(p.k,-1)?pts[i-1].v:null, d=pv==null?null:pctVs(p.v,pv);
       return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${p.e&&m!=='diff'?`<div class="estit">推估件數：${itTxt(p.k)}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}</td><td class="n">${d==null?'—':pctHtml(d)}</td></tr>`; }).join('')+
@@ -1114,22 +1138,11 @@ function showTrend(m){
 }
 
 // ---------- 今日明細 ----------
-// 這個月 1 日到今天的累進折線圖。cum＝每天的累計值（索引 1..D）
-function cumHtml(title,ds,cum){
-  const pts=[]; for(let d=1;d<=ds.D;d++) pts.push({k:d,v:cum[d]});
-  const notes=[]; if(ds.odd) notes.push(`有 ${ds.odd} 筆沒有日期（或日期不在這個月），算在 1 日`); if(ds.late) notes.push(`有 ${ds.late} 筆的日期在今天之後，沒有畫進來`);
-  return `<div class="cumh">本月累進・${title}<small>${ds.mm}月1日～${ds.D}日</small></div>${lineSvg(pts,ds.D,ds.mm)}`+
-    (notes.length?`<div class="sub2" style="margin-top:0">${notes.join('；')}。</div>`:'');
-}
 function showToday(){
   if(VIEW) return showTodayMine();
   const t=todayInfo(), [y,m]=t.key.split('-').map(Number), day=t.md.split('/')[1];
-  const ds=dailySums(t,r=>Object.keys(r.it).reduce((x,pid)=>x+r.it[pid]*rateOf(t.c.cfg,pid,t.live).price,0)), cum=[0];
-  for(let d=1;d<=ds.D;d++) cum[d]=cum[d-1]+ds.sum[d];
-  $('dlg').innerHTML=`<h2>今日增加（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    <div class="hint">今天新增 ${t.rows.length} 筆、${t.units} 件，品項總點數 ${fmt(t.sales)} 點。</div>
-    ${cumHtml('品項總點數',ds,cum)}
-    <div class="cumh">今日明細<small>「序」對應試算表該分頁的序號</small></div>
+  $('dlg').innerHTML=`<h2>今日明細（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
+    <div class="hint">今天新增 ${t.rows.length} 筆、${t.units} 件，品項總點數 ${fmt(t.sales)} 點。「序」對應試算表該分頁的序號。</div>
     <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th class="l">主要</th><th>品項點數</th></tr></thead><tbody>`+
     (t.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td>`+
       `<td class="l">${esc(r.doc)||'<span style="color:var(--bad)">未填</span>'}</td><td class="l">${esc(r.np)||'<span style="color:var(--bad)">未填</span>'}</td><td class="n">${fmt(t.each[i])}</td></tr>`).join('')||
@@ -1141,14 +1154,8 @@ function showToday(){
 function showTodayMine(){
   if(!viewInfo) return;
   const me=todayMine(viewInfo.name), t=me.t, [y,m]=t.key.split('-').map(Number), day=t.md.split('/')[1];
-  // 我的點數逐日累進＝到那天為止自己主要的＋到那天為止每人的平分（和月合計同一個算法，所以今天那一點等於這個月我的點數）
-  const rv=(r,f)=>Object.keys(r.it).reduce((x,pid)=>x+r.it[pid]*rateOf(t.c.cfg,pid,t.live)[f],0);
-  const ds=dailySums(t,r=>r.np===viewInfo.name?rv(r,'promo'):0), pool=dailySums(t,r=>rv(r,'pool')).sum, cum=[0];
-  for(let d=1,a=0,b=0;d<=ds.D;d++){ a+=ds.sum[d]; b+=pool[d]; cum[d]=a+(me.inPool&&me.N?Math.floor(b/me.N):0); }
-  $('dlg').innerHTML=`<h2>今日增加（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
+  $('dlg').innerHTML=`<h2>今日明細（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
     <div class="hint">今天增加 ${fmt(me.total)} 點＝主要 ${fmt(me.promo)} 點＋平分 ${fmt(me.share)} 點。</div>
-    ${cumHtml('我的點數',ds,cum)}
-    <div class="cumh">今日明細</div>
     <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>主要點數</th></tr></thead><tbody>`+
     (me.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(r.doc)}</td><td class="n">${fmt(me.each[i])}</td></tr>`).join('')||
      '<tr><td class="l mut" colspan="4">今天還沒有你為主要的紀錄</td></tr>')+
