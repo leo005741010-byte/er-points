@@ -176,6 +176,8 @@ input:focus{outline:2px solid #9cc0e6;outline-offset:0}
 .dlg h2 .btn{margin-left:auto}
 .dlg .cumh{font-weight:700;color:var(--navy-dark);font-size:14.5px;margin:12px 0 0}
 .dlg .cumh small{font-weight:400;color:var(--mut);margin-left:6px}
+.lg2{display:flex;gap:6px 16px;flex-wrap:wrap;justify-content:center;font-size:12.5px;color:var(--txt);margin:-4px 0 8px}
+.lg2 i{display:inline-block;width:24px;border-top:3px solid var(--navy);vertical-align:middle;margin-right:6px}.lg2 i.d{border-top:2px dashed #2a9d8f}
 .empty{text-align:center;color:var(--mut);padding:40px 10px}
 #sync-st{cursor:pointer;border:1px solid var(--line);border-radius:999px;padding:1px 10px;white-space:nowrap}
 #sync-st.bad{background:#b3261e;border-color:#b3261e;color:#fff}
@@ -245,7 +247,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.05g';
+const APP_VER='2026.10.05h';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -1068,10 +1070,11 @@ function vsPrevHtml(m,key){
   return d==null?'沒有上個月的資料可比':'較上月'+(h&&T.est?'（推估）':'')+' '+pctHtml(d);
 }
 // 折線圖（純 SVG，不用外部函式庫）。pts=[{k:'115-10',v:數值,e:推估值}]，curKey 那一點用橘色標出來。
-// day＝月份數字時是「逐日」模式：k 是幾日，橫軸標日期
+// day＝月份數字時是「逐日」模式：k 是幾日，橫軸標日期。pts 帶 v2 時多畫一條綠色虛線（只在最後一點標數字）
 function lineSvg(pts,curKey,day){
   const n=pts.length, nice=m=>{ const e=Math.pow(10,Math.floor(Math.log10(m))); return [1,2,2.5,4,5,6,8,10].map(f=>f*e).find(v=>v>=m)||m; };   // 縱軸上下限取整齊的數
-  const max=Math.max(0,...pts.map(p=>p.v)), min=Math.min(0,...pts.map(p=>p.v));
+  const two=n>0&&pts[0].v2!=null, all=pts.map(p=>p.v).concat(two?pts.map(p=>p.v2):[]);
+  const max=Math.max(0,...all), min=Math.min(0,...all);
   const lo=min<0?-nice(-min):0, hi=max>0?nice(max):(lo<0?0:1);
   const W=400,H=230,L=lo<0?60:52,R=22,B=38, step=n>1?(W-L-R)/(n-1):W;
   const T=n>6?40:26;
@@ -1079,10 +1082,11 @@ function lineSvg(pts,curKey,day){
   let g='';
   for(let i=0;i<=4;i++){ const v=lo+(hi-lo)*i/4, yy=y(v);
     g+=`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="${v===0&&lo<0?'#9aa7b8':'#dfe6ee'}" stroke-width="1"/><text x="${L-6}" y="${yy+4}" text-anchor="end" font-size="10.5" fill="#6b7a8c">${fmt(v)}</text>`; }
+  if(two) for(let i=1;i<n;i++) g+=`<line x1="${x(i-1)}" y1="${y(pts[i-1].v2)}" x2="${x(i)}" y2="${y(pts[i].v2)}" stroke="#2a9d8f" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 5"/>`;
   for(let i=1;i<n;i++) g+=`<line x1="${x(i-1)}" y1="${y(pts[i-1].v)}" x2="${x(i)}" y2="${y(pts[i].v)}" stroke="#1a4a7a" stroke-width="2.5" stroke-linecap="round"${pts[i-1].e||pts[i].e?' stroke-dasharray="1 6"':''}/>`;
   // 點上的數字：預設放在點的正上方，會蓋到前面放好的數字時改放更高或點的下方
-  const boxes=[], labelY=(x0,cy,w)=>{
-    for(const dy of [-10,-23,21,-36,34]){ const ty=cy+dy, b=[x0-2,ty-10,x0+w+2,ty+3];
+  const boxes=[], labelY=(x0,cy,w,order)=>{
+    for(const dy of order||[-10,-23,21,-36,34]){ const ty=cy+dy, b=[x0-2,ty-10,x0+w+2,ty+3];
       if(ty<11||ty>H-B-3||boxes.some(o=>b[0]<o[2]&&b[2]>o[0]&&b[1]<o[3]&&b[3]>o[1])) continue;
       boxes.push(b); return ty; }
     return cy-10; };
@@ -1097,6 +1101,9 @@ function lineSvg(pts,curKey,day){
       (day?(i===0?`<text x="${x(i)}" y="${H-B+30}" text-anchor="middle" font-size="10" fill="#6b7a8c">${day}月</text>`:''):
        yy!==lastY?`<text x="${x(i)}" y="${H-B+30}" text-anchor="middle" font-size="10" fill="#6b7a8c">${yy}年</text>`:'');
     lastY=yy; });
+  if(two){ const q=pts[n-1], lw=fmt(q.v2).length*6.4, lx=x(n-1)-(n>1?4:0), ly=labelY(n>1?lx-lw:lx-lw/2,y(q.v2),lw,[21,34,-10,-23]);   // 虛線的數字放在點的下方，避開實線那邊的數字
+    g+=`<circle cx="${x(n-1)}" cy="${y(q.v2)}" r="3.5" fill="#2a9d8f" stroke="#fff" stroke-width="1.5"/>`+
+      `<text x="${lx}" y="${ly}" text-anchor="${n>1?'end':'middle'}" font-size="11" font-weight="700" fill="#1f7a70" stroke="#fff" stroke-width="3" paint-order="stroke">${fmt(q.v2)}</text>`; }
   return `<svg class="trend" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
 }
 // 逐日累進（品項總點數／我的點數這兩塊磚點下去時，放在逐月趨勢上面）：正在看的那個月，1 日起每天累計到多少
@@ -1108,15 +1115,17 @@ const CUM={
   // 我的點數＝到那天為止自己主要的＋到那天為止每人的平分（和月合計同一個算法，所以最後一點等於那個月我的點數）
   myamt:key=>{ const live=ratesFor(key), name=viewInfo?viewInfo.name:'', ds=dailySums(key,(r,c)=>r.np===name?rowVal(r,c,live,'promo'):0);
     const pool=dailySums(key,(r,c)=>rowVal(r,c,live,'pool')).sum, N=ds.c.cfg.sharers.length, inPool=ds.c.cfg.sharers.includes(name), cum=[0];
-    for(let d=1,a=0,b=0;d<=ds.D;d++){ a+=ds.sum[d]; b+=pool[d]; cum[d]=a+(inPool&&N?Math.floor(b/N):0); }
-    return {ds,cum}; },
+    const cum2=[0];   // 只算主要、不加平分
+    for(let d=1,a=0,b=0;d<=ds.D;d++){ a+=ds.sum[d]; b+=pool[d]; cum2[d]=a; cum[d]=a+(inPool&&N?Math.floor(b/N):0); }
+    return {ds,cum,cum2,legend:['我的點數（主要＋平分）','只算主要（不含平分）']}; },
 };
 function cumHtml(m){
   if(!CUM[m]||!cur||!state.data.months[cur]) return '';
-  const {ds,cum}=CUM[m](cur), pts=[]; for(let d=1;d<=ds.D;d++) pts.push({k:d,v:cum[d]});
+  const {ds,cum,cum2,legend}=CUM[m](cur), pts=[]; for(let d=1;d<=ds.D;d++) pts.push(cum2?{k:d,v:cum[d],v2:cum2[d]}:{k:d,v:cum[d]});
   const notes=[]; if(ds.isNow) notes.push('這個月還沒過完，畫到今天（橘色那一點）');
   if(ds.odd) notes.push(`有 ${ds.odd} 筆沒有日期（或日期不在這個月），算在 1 日`); if(ds.late) notes.push(`有 ${ds.late} 筆的日期在今天之後，沒有畫進來`);
   return `<div class="cumh">${keyLabel(cur)}・逐日累進<small>${ds.mm}月1日～${ds.D}日</small></div>${lineSvg(pts,ds.isNow?ds.D:-1,ds.mm)}`+
+    (cum2?`<div class="lg2"><span><i></i>${legend[0]}</span><span><i class="d"></i>${legend[1]}</span></div>`:'')+
     `<div class="sub2" style="margin-top:0">從 1 日起每天累計到多少；換月份（最下面那一條）再點進來，就是那個月的。${notes.length?notes.join('；')+'。':''}</div>
     <div class="cumh">逐月趨勢</div>`;
 }
