@@ -247,7 +247,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.05i';
+const APP_VER='2026.10.05j';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -1626,8 +1626,6 @@ function renderMe(ks){
     <div class="tiles"><div class="tile" style="grid-column:1/-1"><div class="l">池子占比</div><div class="v">${pct==null?'—':pct.toFixed(1)+'%'}</div>
       <div class="s">我的點數 ÷ 全體專師的點數</div><div class="bar"><span style="width:${pct==null?0:Math.min(100,pct)}%"></span></div></div></div>
     ${pieCard('我的點數的組成',[{label:'平分',note:'',v:p.share,c:'#9aa7b8'}].concat(pids.map(pid=>({label:prodName(pid),note:'主要 '+p.it[pid]+' 件',v:p.it[pid]*rateOf(c.cfg,pid).promo,c:prodColor(pid)}))))}
-    <div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
-      <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>
     <details class="card sec" data-sec="me-expl"${isOpen('me-expl')?' open':''}><summary><span>點數說明</span></summary>
       <div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>主要</th><th>平分</th><th>平分每人（÷${N} 位）</th></tr></thead><tbody>`+
       (expl.map(x=>`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.promo)}</td><td class="n">${fmt(x.r.pool)}</td><td class="n">${N?fmt2(x.r.pool/N):'—'}</td></tr>`).join('')||
@@ -1639,9 +1637,12 @@ function renderMe(ks){
       <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>主要點數</th></tr></thead><tbody>`+
       (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(r.doc)}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
        '<tr><td class="l mut" colspan="5">這個月還沒有你為主要的紀錄</td></tr>')+`</tbody></table></div></details>
-    <div class="card"><h2>各月累計</h2><div class="tw"><table><thead><tr><th class="l">月份</th><th>件數</th><th>主要</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
+    <details class="card sec" data-sec="me-all"${isOpen('me-all')?' open':''}><summary><span>各月合計</span><span class="sum-amt">${all.length} 個月</span></summary>
+      <div class="tw"><table><thead><tr><th class="l">月份</th><th>件數</th><th>主要</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
       all.map(({k,p})=>`<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td><td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`+
-        `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`).join('')+`</tbody></table></div></div>
+        `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`).join('')+`</tbody></table></div></details>
+    <div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
+      <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>
     ${installHtml()}
     <div style="text-align:center;margin-top:8px"><button class="btn mini ghost" data-act="me-forget">在這台裝置移除這個連結</button></div>`;
 }
