@@ -247,7 +247,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.05h';
+const APP_VER='2026.10.05i';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -1072,7 +1072,8 @@ function vsPrevHtml(m,key){
 // 折線圖（純 SVG，不用外部函式庫）。pts=[{k:'115-10',v:數值,e:推估值}]，curKey 那一點用橘色標出來。
 // day＝月份數字時是「逐日」模式：k 是幾日，橫軸標日期。pts 帶 v2 時多畫一條綠色虛線（只在最後一點標數字）
 function lineSvg(pts,curKey,day){
-  const n=pts.length, nice=m=>{ const e=Math.pow(10,Math.floor(Math.log10(m))); return [1,2,2.5,4,5,6,8,10].map(f=>f*e).find(v=>v>=m)||m; };   // 縱軸上下限取整齊的數
+  const n=pts.length, nice=m=>{ const raw=m/4, e=Math.pow(10,Math.floor(Math.log10(raw)));   // 縱軸分四格：每格取剛好夠大的整齊整數（例：最大 10,197 → 每格 3,000、上限 12,000）
+    return 4*([1,1.25,1.5,2,2.5,3,4,5,6,8,10].map(f=>f*e).find(v=>v>=raw&&Math.abs(v-Math.round(v))<1e-9)||Math.ceil(raw)); };
   const two=n>0&&pts[0].v2!=null, all=pts.map(p=>p.v).concat(two?pts.map(p=>p.v2):[]);
   const max=Math.max(0,...all), min=Math.min(0,...all);
   const lo=min<0?-nice(-min):0, hi=max>0?nice(max):(lo<0?0:1);
@@ -1091,11 +1092,11 @@ function lineSvg(pts,curKey,day){
       boxes.push(b); return ty; }
     return cy-10; };
   let lastY=null;
-  pts.forEach((p,i)=>{ const [yy,mm]=day?[0,0]:p.k.split('-').map(Number), on=p.k===curKey, show=n<=(day?8:12)||on||i===n-1;
+  pts.forEach((p,i)=>{ const [yy,mm]=day?[0,0]:p.k.split('-').map(Number), on=p.k===curKey, show=n<=(day?8:12)||on||i===n-1||!!p.lab;
     const tick=day?(n<=16||i===0||i===n-1||((i+1)%5===0&&n-1-i>1)?p.k:''):mm+'月';
     const anc=n>1&&i===0?'start':n>1&&i===n-1?'end':'middle', lx=x(i)+(anc==='start'?4:anc==='end'?-4:0), lw=fmt(p.v).length*6.4;
     const ly=show?labelY(anc==='start'?lx:anc==='end'?lx-lw:lx-lw/2,y(p.v),lw):0;
-    g+=(day&&n>16&&!on&&i!==n-1?'':`<circle cx="${x(i)}" cy="${y(p.v)}" r="${on?5.5:4}" fill="${on?'#f2a541':p.e?'#fff':'#1a4a7a'}" stroke="${p.e&&!on?'#1a4a7a':'#fff'}" stroke-width="${p.e&&!on?2:1.5}"/>`)+
+    g+=(day&&n>16&&!on&&i!==n-1&&!p.lab?'':`<circle cx="${x(i)}" cy="${y(p.v)}" r="${on?5.5:4}" fill="${on?'#f2a541':p.e?'#fff':'#1a4a7a'}" stroke="${p.e&&!on?'#1a4a7a':'#fff'}" stroke-width="${p.e&&!on?2:1.5}"/>`)+
       (show?`<text x="${lx}" y="${ly}" text-anchor="${anc}" font-size="11" font-weight="700" fill="${on?'#a85800':'#12355a'}" stroke="#fff" stroke-width="3" paint-order="stroke">${fmt(p.v)}</text>`:'')+
       (tick!==''?`<text x="${x(i)}" y="${H-B+16}" text-anchor="middle" font-size="11" fill="#1f2d3d">${tick}</text>`:'')+
       (day?(i===0?`<text x="${x(i)}" y="${H-B+30}" text-anchor="middle" font-size="10" fill="#6b7a8c">${day}月</text>`:''):
@@ -1111,7 +1112,7 @@ const rowVal=(r,c,live,f)=>Object.keys(r.it).reduce((x,pid)=>x+r.it[pid]*rateOf(
 const CUM={
   sales:key=>{ const live=ratesFor(key), ds=dailySums(key,(r,c)=>rowVal(r,c,live,'price')), cum=[0];
     for(let d=1;d<=ds.D;d++) cum[d]=cum[d-1]+ds.sum[d];
-    return {ds,cum}; },
+    return {ds,cum,daily:1}; },
   // 我的點數＝到那天為止自己主要的＋到那天為止每人的平分（和月合計同一個算法，所以最後一點等於那個月我的點數）
   myamt:key=>{ const live=ratesFor(key), name=viewInfo?viewInfo.name:'', ds=dailySums(key,(r,c)=>r.np===name?rowVal(r,c,live,'promo'):0);
     const pool=dailySums(key,(r,c)=>rowVal(r,c,live,'pool')).sum, N=ds.c.cfg.sharers.length, inPool=ds.c.cfg.sharers.includes(name), cum=[0];
@@ -1121,13 +1122,17 @@ const CUM={
 };
 function cumHtml(m){
   if(!CUM[m]||!cur||!state.data.months[cur]) return '';
-  const {ds,cum,cum2,legend}=CUM[m](cur), pts=[]; for(let d=1;d<=ds.D;d++) pts.push(cum2?{k:d,v:cum[d],v2:cum2[d]}:{k:d,v:cum[d]});
+  const {ds,cum,cum2,legend,daily}=CUM[m](cur), pts=[]; for(let d=1;d<=ds.D;d++) pts.push(cum2?{k:d,v:cum[d],v2:cum2[d]}:{k:d,v:cum[d]});
   const notes=[]; if(ds.isNow) notes.push('這個月還沒過完，畫到今天（橘色那一點）');
   if(ds.odd) notes.push(`有 ${ds.odd} 筆沒有日期（或日期不在這個月），算在 1 日`); if(ds.late) notes.push(`有 ${ds.late} 筆的日期在今天之後，沒有畫進來`);
   return `<div class="cumh">${keyLabel(cur)}・逐日累進<small>${ds.mm}月1日～${ds.D}日</small></div>${lineSvg(pts,ds.isNow?ds.D:-1,ds.mm)}`+
     (cum2?`<div class="lg2"><span><i></i>${legend[0]}</span><span><i class="d"></i>${legend[1]}</span></div>`:'')+
-    `<div class="sub2" style="margin-top:0">從 1 日起每天累計到多少；換月份（最下面那一條）再點進來，就是那個月的。${notes.length?notes.join('；')+'。':''}</div>
-    <div class="cumh">逐月趨勢</div>`;
+    `<div class="sub2" style="margin-top:0">從 1 日起每天累計到多少；換月份（最下面那一條）再點進來，就是那個月的。${notes.length?notes.join('；')+'。':''}</div>`+
+    (daily?(()=>{ const dp=[]; let mx=1;   // 每天各增加多少；最高的那一天標出數字
+      for(let d=1;d<=ds.D;d++){ dp.push({k:d,v:ds.sum[d]}); if(ds.sum[d]>ds.sum[mx]) mx=d; }
+      if(ds.sum[mx]>0) dp[mx-1].lab=1;
+      return `<div class="cumh">${keyLabel(cur)}・逐日<small>每天各增加多少（不累計）</small></div>${lineSvg(dp,ds.isNow?ds.D:-1,ds.mm)}`; })():'')+
+    `<div class="cumh">逐月趨勢</div>`;
 }
 function showTrend(m){
   const T=TREND[m]; if(!T||(VIEW&&!/^my/.test(m))) return;
