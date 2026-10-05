@@ -102,6 +102,8 @@ details.card[open]>summary{margin-bottom:12px}
 .tile.big .v{font-size:32px}
 .tile.big .l{font-size:14px;color:var(--navy-dark);font-weight:600}
 .up{color:var(--ok);font-weight:700}.dn{color:var(--warn);font-weight:700}
+.est{display:inline-block;font-size:11px;font-weight:400;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:6px;vertical-align:1px}
+.estit{font-size:11.5px;color:var(--mut);white-space:normal}
 .tile.clk{cursor:pointer;position:relative}
 .tile.clk:hover{border-color:#8fb1d6;box-shadow:0 2px 10px rgba(26,74,122,.12)}
 .tile .tg{position:absolute;top:7px;right:10px;font-size:13px;opacity:.6}
@@ -241,7 +243,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.05a';
+const APP_VER='2026.10.05b';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -313,6 +315,7 @@ function normState(s){
   s.cfg=s.cfg||{}; s.cfg.rates=s.cfg.rates||{};
   s.cfg.views=s.cfg.views||{};   // 個人查看連結 {姓名:{tok,t}｜{del:1,t}}
   s.cfg.rateSets=s.cfg.rateSets||{};   // 各月自己的每件點數 {'115-10':{r:{品項:{…}},t}｜{del:1,t}}，見 ratesFor()
+  s.cfg.hist=s.cfg.hist||{};   // 試算表開始記錄以前的月份 {'115-01':{cost,it:{品項:件數},t}｜{del:1,t}}，只給折線圖用，見 histOf()
   if(!Array.isArray(s.cfg.sharers)) s.cfg.sharers=null;   // null＝跟著試算表統計頁的專師名單
   s.data=s.data||{}; s.data.months=s.data.months||{}; s.data.extra=s.data.extra||{};
   s.data.roster=s.data.roster||{}; s.data.roster.np=s.data.roster.np||[]; s.data.roster.doc=s.data.roster.doc||[];
@@ -838,9 +841,9 @@ function renderMonth(){
   // 圓餅圖：這個月的品項總點數，各品項各佔多少
   h+=pieCard('品項總點數的組成',pids.map(pid=>({label:prodName(pid),note:c.prod[pid]+' 件',v:c.prod[pid]*rateOf(c.cfg,pid).price,c:prodColor(pid)})));
   h+=`<div class="tiles">
-    <div class="tile"><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div></div>
-    <div class="tile"><div class="l">成本總點數</div><div class="v">${fmt(c.cost)}</div><div class="s">${c.cost?'件數 × 成本點數':'還沒填成本點數'}</div></div>
-    <div class="tile"><div class="l">總點數差</div><div class="v">${fmt(c.vendor-c.cost)}</div><div class="s">總點數 − 成本總點數</div></div>
+    <div class="tile clk" data-act="trend" data-m="vendor" role="button"><span class="tg">📈</span><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div></div>
+    <div class="tile clk" data-act="trend" data-m="cost" role="button"><span class="tg">📈</span><div class="l">成本總點數</div><div class="v">${fmt(c.cost)}</div><div class="s">${c.cost?vsPrevHtml('cost',cur):'還沒填成本點數'}</div></div>
+    <div class="tile clk" data-act="trend" data-m="diff" role="button"><span class="tg">📈</span><div class="l">總點數差</div><div class="v">${fmt(c.vendor-c.cost)}</div><div class="s">總點數 − 成本總點數</div></div>
     <div class="tile"><div class="l">醫師點數合計</div><div class="v">${fmt(dTot)}</div><div class="s">${docs.filter(p=>p.amt>0).length} 位</div></div>
     <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">主要 ${fmt(promoTot)}＋平分 ${fmt(c.share*c.cfg.sharers.length)}</div></div>
     ${fp?`<div class="tile"><div class="l">科部</div><div class="v">${fmt(fp.amt)}</div><div class="s">不屬於個人</div></div>`:''}
@@ -1021,47 +1024,76 @@ function pieCard(title,parts){
 
 // ---------- 逐月趨勢（點大數字磚跳出折線圖）----------
 function meOf(k){ const pk='n|'+(viewInfo?viewInfo.name:''), c=calcMonth(k); return people(c).find(x=>x.pk===pk)||{it:{},promo:0,share:0,amt:0}; }
+// 試算表開始記錄以前的月份（cfg.hist）：cost＝當時報表上的成本總點數；it＝用成本點數反推出來的各品項件數，只用來估總點數。
+// 只出現在折線圖；試算表已經有分頁的月份一律以試算表為準
+const histOf=k=>{ const h=(state.cfg.hist||{})[k]; return h&&!h.del&&!state.data.months[k]?h:null; };
+const histCost=k=>Number(histOf(k).cost)||0;
+const histVendor=k=>{ const it=histOf(k).it||{}, r=ratesFor(k); return Object.keys(it).reduce((t,pid)=>{ const x=r[pid]||ZERO; return t+it[pid]*(x.doc+x.promo+x.pool+x.fund); },0); };
+// hist＝更早的月份怎麼算（沒有就只畫試算表有的月份）；est＝更早月份的值是推估的（圖上畫空心點、虛線）
 const TREND={
   sales:  {title:'品項總點數',  unit:'點', get:k=>calcMonth(k).sales},
   units:  {title:'總件數',      unit:'件', get:k=>calcMonth(k).units},
+  vendor: {title:'總點數',      unit:'點', get:k=>calcMonth(k).vendor, hist:histVendor, est:1},
+  cost:   {title:'成本總點數',  unit:'點', get:k=>calcMonth(k).cost, hist:histCost},
+  diff:   {title:'總點數差',    unit:'點', get:k=>{ const c=calcMonth(k); return c.vendor-c.cost; }, hist:k=>histVendor(k)-histCost(k), est:1},
   myamt:  {title:'我的點數',    unit:'點', get:k=>meOf(k).amt},
   myunits:{title:'我的主要件數',unit:'件', get:k=>sumVals(meOf(k).it)},
 };
-const pctVs=(v,pv)=>pv?(v-pv)/pv*100:null;
+const pctVs=(v,pv)=>pv?(v-pv)/Math.abs(pv)*100:null;
 const pctHtml=d=>`<span class="${d>=0?'up':'dn'}">${d>=0?'▲ +':'▼ '}${d.toFixed(1)}%</span>`;
+// 某個指標每個月的值：試算表有的月份照算；更早的月份只有帶 hist 的指標有（h＝取自 cfg.hist，e＝推估值）
+function trendPts(m){
+  const T=TREND[m], ks=allKeys().filter(k=>state.data.months[k]);
+  if(T.hist&&!VIEW) Object.keys(state.cfg.hist||{}).forEach(k=>{ if(histOf(k)) ks.push(k); });
+  return ks.sort().map(k=>state.data.months[k]?{k,v:T.get(k)}:{k,v:T.hist(k),h:1,e:T.est?1:0});
+}
 // 數字磚上的「較上月」：上個月（月曆上的前一個月）有資料才比
 function vsPrevHtml(m,key){
-  const pk=shiftKey(key,-1), d=state.data.months[pk]?pctVs(TREND[m].get(key),TREND[m].get(pk)):null;
+  const pk=shiftKey(key,-1), T=TREND[m], pv=state.data.months[pk]?T.get(pk):(T.hist&&!VIEW&&histOf(pk)?T.hist(pk):null);
+  const d=pv==null?null:pctVs(T.get(key),pv);
   return d==null?'沒有上個月的資料可比':'較上月 '+pctHtml(d);
 }
-// 折線圖（純 SVG，不用外部函式庫）。pts=[{k:'115-10',v:數值}]，curKey 那一點用橘色標出來
+// 折線圖（純 SVG，不用外部函式庫）。pts=[{k:'115-10',v:數值,e:推估值}]，curKey 那一點用橘色標出來
 function lineSvg(pts,curKey){
-  const W=400,H=230,L=52,R=22,T=26,B=38, n=pts.length, max=Math.max(1,...pts.map(p=>p.v));
-  const e=Math.pow(10,Math.floor(Math.log10(max))), top=[1,2,2.5,5,10].map(f=>f*e).find(v=>v>=max)||max;   // 縱軸上限取整齊的數
-  const x=i=>n===1?L+(W-L-R)/2:L+(W-L-R)*i/(n-1), y=v=>T+(H-T-B)*(1-v/top);
+  const n=pts.length, nice=m=>{ const e=Math.pow(10,Math.floor(Math.log10(m))); return [1,2,2.5,4,5,6,8,10].map(f=>f*e).find(v=>v>=m)||m; };   // 縱軸上下限取整齊的數
+  const max=Math.max(0,...pts.map(p=>p.v)), min=Math.min(0,...pts.map(p=>p.v));
+  const lo=min<0?-nice(-min):0, hi=max>0?nice(max):(lo<0?0:1);
+  const W=400,H=230,L=lo<0?60:52,R=22,B=38, step=n>1?(W-L-R)/(n-1):W;
+  const T=n>6?40:26;
+  const x=i=>n===1?L+(W-L-R)/2:L+step*i, y=v=>T+(H-T-B)*(1-(v-lo)/(hi-lo));
   let g='';
-  for(let i=0;i<=4;i++){ const v=top*i/4, yy=y(v);
-    g+=`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="#dfe6ee" stroke-width="1"/><text x="${L-6}" y="${yy+4}" text-anchor="end" font-size="10.5" fill="#6b7a8c">${fmt(v)}</text>`; }
-  if(n>1) g+=`<polyline fill="none" stroke="#1a4a7a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${pts.map((p,i)=>x(i)+','+y(p.v)).join(' ')}"/>`;
+  for(let i=0;i<=4;i++){ const v=lo+(hi-lo)*i/4, yy=y(v);
+    g+=`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="${v===0&&lo<0?'#9aa7b8':'#dfe6ee'}" stroke-width="1"/><text x="${L-6}" y="${yy+4}" text-anchor="end" font-size="10.5" fill="#6b7a8c">${fmt(v)}</text>`; }
+  for(let i=1;i<n;i++) g+=`<line x1="${x(i-1)}" y1="${y(pts[i-1].v)}" x2="${x(i)}" y2="${y(pts[i].v)}" stroke="#1a4a7a" stroke-width="2.5" stroke-linecap="round"${pts[i-1].e||pts[i].e?' stroke-dasharray="1 6"':''}/>`;
+  // 點上的數字：預設放在點的正上方，會蓋到前面放好的數字時改放更高或點的下方
+  const boxes=[], labelY=(x0,cy,w)=>{
+    for(const dy of [-10,-23,21,-36,34]){ const ty=cy+dy, b=[x0-2,ty-10,x0+w+2,ty+3];
+      if(ty<11||ty>H-B-3||boxes.some(o=>b[0]<o[2]&&b[2]>o[0]&&b[1]<o[3]&&b[3]>o[1])) continue;
+      boxes.push(b); return ty; }
+    return cy-10; };
   let lastY=null;
   pts.forEach((p,i)=>{ const [yy,mm]=p.k.split('-').map(Number), on=p.k===curKey, show=n<=12||on||i===n-1;
-    g+=`<circle cx="${x(i)}" cy="${y(p.v)}" r="${on?5.5:4}" fill="${on?'#f2a541':'#1a4a7a'}" stroke="#fff" stroke-width="1.5"/>`+
-      (show?`<text x="${x(i)+(n>1&&i===0?4:n>1&&i===n-1?-4:0)}" y="${y(p.v)-10}" text-anchor="${n>1&&i===0?'start':n>1&&i===n-1?'end':'middle'}" font-size="11" font-weight="700" fill="${on?'#a85800':'#12355a'}">${fmt(p.v)}</text>`:'')+
+    const anc=n>1&&i===0?'start':n>1&&i===n-1?'end':'middle', lx=x(i)+(anc==='start'?4:anc==='end'?-4:0), lw=fmt(p.v).length*6.4;
+    const ly=show?labelY(anc==='start'?lx:anc==='end'?lx-lw:lx-lw/2,y(p.v),lw):0;
+    g+=`<circle cx="${x(i)}" cy="${y(p.v)}" r="${on?5.5:4}" fill="${on?'#f2a541':p.e?'#fff':'#1a4a7a'}" stroke="${p.e&&!on?'#1a4a7a':'#fff'}" stroke-width="${p.e&&!on?2:1.5}"/>`+
+      (show?`<text x="${lx}" y="${ly}" text-anchor="${anc}" font-size="11" font-weight="700" fill="${on?'#a85800':'#12355a'}" stroke="#fff" stroke-width="3" paint-order="stroke">${fmt(p.v)}</text>`:'')+
       `<text x="${x(i)}" y="${H-B+16}" text-anchor="middle" font-size="11" fill="#1f2d3d">${mm}月</text>`+
       (yy!==lastY?`<text x="${x(i)}" y="${H-B+30}" text-anchor="middle" font-size="10" fill="#6b7a8c">${yy}年</text>`:'');
     lastY=yy; });
   return `<svg class="trend" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
 }
 function showTrend(m){
-  const T=TREND[m]; if(!T) return;
-  const pts=allKeys().filter(k=>state.data.months[k]).map(k=>({k,v:T.get(k)}));
+  const T=TREND[m]; if(!T||(VIEW&&!/^my/.test(m))) return;
+  const pts=trendPts(m), anyH=pts.some(p=>p.h);
+  const itTxt=k=>{ const it=histOf(k).it||{}; return Object.keys(it).filter(pid=>it[pid]).map(pid=>`${esc(prodName(pid))} ${it[pid]}`).join('・'); };
   $('dlg').innerHTML=`<h2>${T.title}・逐月趨勢<button class="btn mini ghost" data-act="close">關閉</button></h2>
     ${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
     <div class="tw"><table><thead><tr><th class="l">月份</th><th>${T.title}</th><th>較上月</th></tr></thead><tbody>`+
     pts.map((p,i)=>{ const pv=i>0&&pts[i-1].k===shiftKey(p.k,-1)?pts[i-1].v:null, d=pv==null?null:pctVs(p.v,pv);
-      return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}</td><td class="n">${fmt(p.v)} ${T.unit}</td><td class="n">${d==null?'—':pctHtml(d)}</td></tr>`; }).join('')+
+      return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${p.e&&m==='vendor'?`<div class="estit">推估件數：${itTxt(p.k)}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}</td><td class="n">${d==null?'—':pctHtml(d)}</td></tr>`; }).join('')+
     `</tbody></table></div>
-    <div class="sub2">每個月一個點；橘色是目前正在看的月份。這個月還沒過完時，數字會比完整的月份低。</div>`;
+    <div class="sub2">每個月一個點；橘色是目前正在看的月份。這個月還沒過完時，數字會比完整的月份低。</div>`+
+    (anyH?`<div class="sub2">${T.est?'標「推估」的月份沒有逐筆紀錄：是拿當時報表上的成本總點數，用各品項的成本點數反推件數，再換算出來的，只能當參考（圖上是空心點、虛線）。':'標「報表」的月份是試算表開始記錄以前的，用的是當時報表上的數字。'}</div>`:'');
   $('mask').classList.add('on');
 }
 
@@ -1217,7 +1249,7 @@ function buildPayload(){
   Object.assign(rates,liveRates());
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm||(!Object.keys(pm.paid||{}).length&&!pm.cfgT)) return;
     pay[k]={paid:pm.paid||{},cfg:pm.cfg||null,cfgT:pm.cfgT||0}; });
-  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{}},pay};
+  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{}},pay};
 }
 const rateSum=r=>r?FIELDS.reduce((t,f)=>t+(Number(r[f])||0),0):0;
 // 本機設定檔（sheet-config.js）的預設值新增了欄位（例如後來才加的科部）時，把還沒填過的欄位補成明確數字、
@@ -1229,6 +1261,15 @@ function applyDefaults(){
   Object.keys(d).forEach(pid=>{ const u=state.cfg.rates[pid]||(state.cfg.rates[pid]={});
     FIELDS.forEach(f=>{ if((u[f]==null||u[f]==='')&&d[pid][f]!=null){ u[f]=Number(d[pid][f])||0; ch=true; } }); });
   state.cfg.defV=v; if(ch) state.cfg.tR=Date.now();
+  return true;
+}
+// 本機設定檔帶的歷史月份（COMMISSION_HISTORY）併進設定，之後跟著同步到其他裝置。每個版本只做一次
+function applyHistory(){
+  const h=window.COMMISSION_HISTORY, v=window.COMMISSION_HISTORY_VERSION||1;
+  if(!h||state.cfg.histV===v) return false;
+  const now=Date.now(); state.cfg.hist=state.cfg.hist||{};
+  Object.keys(h).forEach(k=>{ state.cfg.hist[k]={cost:Number(h[k].cost)||0,it:Object.assign({},h[k].it),t:now}; });
+  state.cfg.histV=v;
   return true;
 }
 // 把雲端內容併進本機，回傳本機有沒有變。點數／平分名單／網址各自看修改時間，確認註記逐人逐月看修改時間，較新的為準
@@ -1246,6 +1287,8 @@ function mergeRemote(rm){
   c.views=c.views||{}; c.rateSets=c.rateSets||{};
   Object.keys(rc.rateSets||{}).forEach(k=>{ const a=rc.rateSets[k], b=c.rateSets[k]; if(a&&(!b||(a.t||0)>(b.t||0))){ c.rateSets[k]=a; ch=true; } });   // 各月的點數：逐月看修改時間
   Object.keys(rc.views||{}).forEach(n=>{ const a=rc.views[n], b=c.views[n]; if(a&&(!b||(a.t||0)>(b.t||0))){ c.views[n]=a; ch=true; } });
+  c.hist=c.hist||{};
+  Object.keys(rc.hist||{}).forEach(k=>{ const a=rc.hist[k], b=c.hist[k]; if(a&&(!b||(a.t||0)>(b.t||0))){ c.hist[k]=a; ch=true; } });   // 歷史月份：逐月看修改時間
   if(rc.url&&((rc.tU||0)>(c.tU||0)||!sheetUrl())){
     if(rc.url!==window.COMMISSION_SHEET_URL) c.url=rc.url; else delete c.url;
     c.tU=Math.max(c.tU||0,rc.tU||0); ch=true;
@@ -1299,6 +1342,7 @@ async function syncNow(){
     const hadUrl=!!sheetUrl();
     let ch=!!(remote&&mergeRemote(remote));
     if(applyDefaults()) ch=true;   // 先併完雲端再補預設值，才不會蓋掉別台裝置剛改的數字
+    if(applyHistory()) ch=true;
     if(ch){ saveState(true); renderAll(); }
     const mine=buildPayload();
     if(!remote||stable(mine)!==stable(remote)) await cloudReq('PUT',await seal(mine));
@@ -1720,7 +1764,7 @@ if(VIEW){
   loadView();
   setInterval(()=>{ if(document.visibilityState==='visible'){ loadView(); refresh(true); } },60*1000);
 }else{
-  if(!sync&&applyDefaults()) saveState(true);
+  if(!sync){ const a=applyDefaults(), b=applyHistory(); if(a||b) saveState(true); }
   renderAll();
   renderSync();
   refresh(true);
