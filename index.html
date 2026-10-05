@@ -241,7 +241,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.04t';
+const APP_VER='2026.10.05a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -282,9 +282,9 @@ const PRODUCTS=[
   {id:'repair',  name:'修護液',re:/修護/},
 ];
 // 每一件的點數怎麼分：doc 醫師、promo 主要、pool 放進專師平分池、fund 科部（不屬於個人）；
-// price＝每件的品項點數，只用來算「品項總點數」，不影響每個人的點數
-const FIELDS=['doc','promo','pool','fund','price'];
-const ZERO={doc:0,promo:0,pool:0,fund:0,price:0};
+// price＝每件的品項點數，只用來算「品項總點數」；cost＝每件的成本點數，只用來算「成本總點數」與「總點數差」。兩個都不影響每個人的點數
+const FIELDS=['doc','promo','pool','fund','price','cost'];
+const ZERO={doc:0,promo:0,pool:0,fund:0,price:0,cost:0};
 // 哪幾張卡展開著
 const LS_UI='erCommission_ui2';
 let ui={};   // 只在這次開啟期間記住（重畫時不會彈回去）；不存到裝置上，所以每次打開 App 都是全部收起來
@@ -380,7 +380,7 @@ function paidOf(key){   // 只回有效的確認紀錄（取消的 {del:1} 不�
 // 這個月的快照設定和現行設定算出來的點數有沒有差（只是多了別的月份才有的新品項不算）
 function snapDiffers(key){
   const pm=state.pay[key]; if(!pm||!pm.cfg) return false;
-  const sig=c=>JSON.stringify([people(c).map(p=>p.pk+'='+p.amt).sort(),Math.round(c.sales)]);   // 品項點數不同也算
+  const sig=c=>JSON.stringify([people(c).map(p=>p.pk+'='+p.amt).sort(),Math.round(c.sales),Math.round(c.cost)]);   // 品項點數、成本點數不同也算
   return sig(calcMonth(key))!==sig(calcMonth(key,cfgFor(key)));
 }
 
@@ -390,16 +390,18 @@ function snapDiffers(key){
 function rateOf(cfg,pid,live){
   const r=cfg.products[pid]||ZERO, lv=((live||ratesFor(cur||''))[pid])||ZERO;
   return {doc:Number(r.doc)||0,promo:Number(r.promo)||0,pool:Number(r.pool)||0,
-    fund:r.fund!=null?(Number(r.fund)||0):(lv.fund||0), price:r.price!=null?(Number(r.price)||0):(lv.price||0)};
+    fund:r.fund!=null?(Number(r.fund)||0):(lv.fund||0), price:r.price!=null?(Number(r.price)||0):(lv.price||0),
+    cost:r.cost!=null?(Number(r.cost)||0):(lv.cost||0)};
 }
 function calcMonth(key,cfgOverride){
   const md=state.data.months[key], cfg=cfgOverride||monthCfg(key), live=ratesFor(key), rc={};
-  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,fund:0,fundIt:{},vendor:0,units:0,sales:0,noPrice:{},zeroRate:{}};
+  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,fund:0,fundIt:{},vendor:0,units:0,sales:0,cost:0,noPrice:{},zeroRate:{}};
   c.rows.forEach(r=>Object.keys(r.it).forEach(pid=>{
     const q=r.it[pid], rt=rc[pid]||(rc[pid]=rateOf(cfg,pid,live));
     if(!cfg.products[pid]||!(rt.doc+rt.promo+rt.pool+rt.fund)) c.zeroRate[pid]=1;
     c.prod[pid]=(c.prod[pid]||0)+q; c.units+=q;
     c.sales+=q*rt.price; if(!rt.price) c.noPrice[pid]=1;
+    c.cost+=q*rt.cost;
     const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc;
     const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=q*rt.promo;
     c.pool+=q*rt.pool; c.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
@@ -837,6 +839,8 @@ function renderMonth(){
   h+=pieCard('品項總點數的組成',pids.map(pid=>({label:prodName(pid),note:c.prod[pid]+' 件',v:c.prod[pid]*rateOf(c.cfg,pid).price,c:prodColor(pid)})));
   h+=`<div class="tiles">
     <div class="tile"><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div></div>
+    <div class="tile"><div class="l">成本總點數</div><div class="v">${fmt(c.cost)}</div><div class="s">${c.cost?'件數 × 成本點數':'還沒填成本點數'}</div></div>
+    <div class="tile"><div class="l">總點數差</div><div class="v">${fmt(c.vendor-c.cost)}</div><div class="s">總點數 − 成本總點數</div></div>
     <div class="tile"><div class="l">醫師點數合計</div><div class="v">${fmt(dTot)}</div><div class="s">${docs.filter(p=>p.amt>0).length} 位</div></div>
     <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">主要 ${fmt(promoTot)}＋平分 ${fmt(c.share*c.cfg.sharers.length)}</div></div>
     ${fp?`<div class="tile"><div class="l">科部</div><div class="v">${fmt(fp.amt)}</div><div class="s">不屬於個人</div></div>`:''}
@@ -930,12 +934,12 @@ function renderRates(){
     $('card-rates').querySelector('summary').textContent='✏ 每件點數'+(cur?'（'+keyLabel(cur)+'）':'');
     el.innerHTML=`<div class="note info" style="margin:0 0 10px">${from}</div>
     <div class="hint">每個月的點數可以不一樣：在想改的那個月把白色格子改好，<b>按「儲存」才會生效</b>。儲存後從那個月起適用，之後沒有另外修改的月份會跟著沿用，之前的月份不受影響。<br>
-      「品項點數」只用來算品項總點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
-    <div class="tw"><table><thead><tr><th class="l">品項</th><th>品項點數</th><th>醫師</th><th>主要</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
+      「品項點數」只用來算品項總點數，「成本點數」只用來算成本總點數與總點數差，這兩欄都不影響每個人的點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
+    <div class="tw"><table><thead><tr><th class="l">品項</th><th>品項點數</th><th>成本點數</th><th>醫師</th><th>主要</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
     productList().map(p=>{ const r=rates[p.id], d=rateDerived(r), id=esc(p.id);
       const dr=rateDraft[p.id]||{};
       const inp=f=>`<td><input type="number" min="0" step="10" value="${f in dr?esc(dr[f]):saved[p.id][f]}"${f in dr?' class="chg"':''} data-act="rate" data-pid="${id}" data-f="${f}"></td>`;
-      return `<tr data-row="${id}"><td class="l"><b>${esc(p.name)}</b></td>${inp('price')}${inp('doc')}${inp('promo')}${inp('pool')}${inp('fund')}<td class="n" data-c="each">${N?fmt2(r.pool/N):'—'}</td><td class="n" data-c="np">${fmt(d.np)}</td><td class="amt" data-c="all">${fmt(d.all)}</td></tr>`; }).join('')+
+      return `<tr data-row="${id}"><td class="l"><b>${esc(p.name)}</b></td>${inp('price')}${inp('cost')}${inp('doc')}${inp('promo')}${inp('pool')}${inp('fund')}<td class="n" data-c="each">${N?fmt2(r.pool/N):'—'}</td><td class="n" data-c="np">${fmt(d.np)}</td><td class="amt" data-c="all">${fmt(d.all)}</td></tr>`; }).join('')+
     `</tbody></table></div>
     <div id="rates-save"></div>
     <div id="rates-note"></div>
@@ -1109,7 +1113,7 @@ function ensureMonth(key){
   else{   // 加科部之前留下的快照：把現行的科部點數寫進去固定下來
     const live=ratesFor(key); let ch=false;
     Object.keys(pm.cfg.products||{}).forEach(pid=>{ const r=pm.cfg.products[pid]; if(!r) return;
-      ['fund','price'].forEach(f=>{ if(r[f]==null){ r[f]=(live[pid]||ZERO)[f]; ch=true; } }); });
+      ['fund','price','cost'].forEach(f=>{ if(r[f]==null){ r[f]=(live[pid]||ZERO)[f]; ch=true; } }); });
     if(ch) pm.cfgT=Date.now();
   }
   return pm;
@@ -1209,7 +1213,7 @@ async function cloudReq(method,body,id){
 // 要同步的內容。點數一律寫出實際數字（含本機預設值），別台裝置才拿得到
 function buildPayload(){
   const c=state.cfg, rates={}, pay={};
-  Object.keys(c.rates).forEach(pid=>{ const u=c.rates[pid]||{}; rates[pid]={doc:Number(u.doc)||0,promo:Number(u.promo)||0,pool:Number(u.pool)||0,fund:Number(u.fund)||0,price:Number(u.price)||0}; });
+  Object.keys(c.rates).forEach(pid=>{ const u=c.rates[pid]||{}; rates[pid]={doc:Number(u.doc)||0,promo:Number(u.promo)||0,pool:Number(u.pool)||0,fund:Number(u.fund)||0,price:Number(u.price)||0,cost:Number(u.cost)||0}; });
   Object.assign(rates,liveRates());
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm||(!Object.keys(pm.paid||{}).length&&!pm.cfgT)) return;
     pay[k]={paid:pm.paid||{},cfg:pm.cfg||null,cfgT:pm.cfgT||0}; });
@@ -1458,7 +1462,7 @@ function installHtml(){
 // ---- 專師端 ----
 // 把解開的內容套成一般的設定格式，之後照常用 calcMonth 算。平分名單只知道人數，用佔位名字補滿
 function applyView(b){
-  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]={doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0}; }); return o; };
+  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]={doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0,cost:0}; }); return o; };
   const pool=(n,inPool)=>{ const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
   state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
   state.cfg.rateSets={}; Object.keys(b.sets||{}).forEach(k=>{ state.cfg.rateSets[k]={r:full(b.sets[k]),t:0}; });
