@@ -247,7 +247,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.05k';
+const APP_VER='2026.10.07a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -281,6 +281,8 @@ const VIEW=(()=>{
 })();
 let _notice=null; if(!VIEW){ try{ _notice=localStorage.getItem(LS_NOTICE); }catch(e){} }
 let viewInfo=null, viewErr=null, _mePicked=false;   // viewInfo＝解開的個人資料；viewErr＝'gone' 連結失效｜'net' 連不上
+const isDocView=()=>!!(viewInfo&&viewInfo.role==='d');   // 個人查看頁是醫師的（否則是專師的）
+const mePk=()=>(isDocView()?'d|':'n|')+(viewInfo?viewInfo.name:'');
 const PRODUCTS=[
   {id:'dressing',name:'水性',  re:/敷料/},
   {id:'scar',    name:'除疤',  re:/疤/},
@@ -317,7 +319,7 @@ function loadState(){
 }
 function normState(s){
   s.cfg=s.cfg||{}; s.cfg.rates=s.cfg.rates||{};
-  s.cfg.views=s.cfg.views||{};   // 個人查看連結 {姓名:{tok,t}｜{del:1,t}}
+  s.cfg.views=s.cfg.views||{};   // 個人查看連結 {鍵:{tok,t}｜{del:1,t}}；鍵＝專師的姓名，醫師是 'd|姓名'
   s.cfg.rateSets=s.cfg.rateSets||{};   // 各月自己的每件點數 {'115-10':{r:{品項:{…}},t}｜{del:1,t}}，見 ratesFor()
   s.cfg.hist=s.cfg.hist||{};   // 試算表開始記錄以前的月份 {'115-01':{cost,it:{品項:件數},t}｜{del:1,t}}，只給折線圖用，見 histOf()
   if(!Array.isArray(s.cfg.sharers)) s.cfg.sharers=null;   // null＝跟著試算表統計頁的專師名單
@@ -466,6 +468,10 @@ function todayInfo(){
 // 某位專師今天增加的點數＝自己主要的＋平分多分到的（今天全體讓平分池變大，每人跟著多的那一份）
 function todayMine(name){
   const t=todayInfo(), c=t.c, N=c.cfg.sharers.length;
+  if(isDocView()){   // 醫師：只有自己那幾筆 × 醫師點數，沒有平分
+    const rows=t.rows.filter(r=>r.doc===name), each=rows.map(r=>Object.keys(r.it).reduce((x,pid)=>x+r.it[pid]*rateOf(c.cfg,pid,t.live).doc,0)), own=each.reduce((a,b)=>a+b,0);
+    return {t,rows,each,promo:own,share:0,total:own,N:0,inPool:false};
+  }
   const rows=t.rows.filter(r=>r.np===name), each=rows.map(r=>Object.keys(r.it).reduce((x,pid)=>x+r.it[pid]*rateOf(c.cfg,pid,t.live).promo,0));
   const promo=each.reduce((a,b)=>a+b,0);
   const share=N&&c.cfg.sharers.includes(name)?c.share-Math.floor((c.pool-t.pool)/N):0;   // 用「現在每人的平分」減「不含今天時每人的平分」，和月合計對得起來
@@ -1035,7 +1041,7 @@ function mixCard(title,parts){
 }
 
 // ---------- 逐月趨勢（點大數字磚跳出折線圖）----------
-function meOf(k){ const pk='n|'+(viewInfo?viewInfo.name:''), c=calcMonth(k); return people(c).find(x=>x.pk===pk)||{it:{},promo:0,share:0,amt:0}; }
+function meOf(k){ const pk=mePk(), c=calcMonth(k); return people(c).find(x=>x.pk===pk)||{it:{},promo:0,share:0,amt:0}; }
 // 試算表開始記錄以前的月份（cfg.hist）：cost＝當時報表上的原始總點數；it＝用原始點數反推出來的各品項件數，用來估總件數、品項總點數、總點數與總點數差。
 // 只出現在折線圖；試算表已經有分頁的月份一律以試算表為準
 const histOf=k=>{ const h=(state.cfg.hist||{})[k]; return h&&!h.del&&!state.data.months[k]?h:null; };
@@ -1050,7 +1056,7 @@ const TREND={
   cost:   {title:'原始總點數',  unit:'點', get:k=>calcMonth(k).cost, hist:histCost},
   diff:   {title:'總點數差',    unit:'點', get:k=>{ const c=calcMonth(k); return c.sales-c.cost; }, hist:k=>histSales(k)-histCost(k), est:1},
   myamt:  {title:'我的點數',    unit:'點', get:k=>meOf(k).amt},
-  myunits:{title:'我的主要件數',unit:'件', get:k=>sumVals(meOf(k).it)},
+  myunits:{get title(){ return isDocView()?'我的件數':'我的主要件數'; },unit:'件', get:k=>sumVals(meOf(k).it)},
 };
 const pctVs=(v,pv)=>pv?(v-pv)/Math.abs(pv)*100:null;
 const pctHtml=d=>`<span class="${d>=0?'up':'dn'}">${d>=0?'▲ +':'▼ '}${d.toFixed(1)}%</span>`;
@@ -1111,7 +1117,12 @@ const CUM={
     for(let d=1;d<=ds.D;d++) cum[d]=cum[d-1]+ds.sum[d];
     return {ds,cum,daily:1}; },
   // 我的點數＝到那天為止自己主要的＋到那天為止每人的平分（和月合計同一個算法，所以最後一點等於那個月我的點數）
-  myamt:key=>{ const live=ratesFor(key), name=viewInfo?viewInfo.name:'', ds=dailySums(key,(r,c)=>r.np===name?rowVal(r,c,live,'promo'):0);
+  // 醫師的我的點數＝到那天為止自己那幾筆 × 醫師點數（沒有平分，所以只有一條線）
+  myamt:key=>{ const live=ratesFor(key), name=viewInfo?viewInfo.name:'';
+    if(isDocView()){ const ds=dailySums(key,(r,c)=>r.doc===name?rowVal(r,c,live,'doc'):0), cum=[0];
+      for(let d=1;d<=ds.D;d++) cum[d]=cum[d-1]+ds.sum[d];
+      return {ds,cum}; }
+    const ds=dailySums(key,(r,c)=>r.np===name?rowVal(r,c,live,'promo'):0);
     const pool=dailySums(key,(r,c)=>rowVal(r,c,live,'pool')).sum, N=ds.c.cfg.sharers.length, inPool=ds.c.cfg.sharers.includes(name), cum=[0];
     const cum2=[0];   // 只算主要、不加平分
     for(let d=1,a=0,b=0;d<=ds.D;d++){ a+=ds.sum[d]; b+=pool[d]; cum2[d]=a; cum[d]=a+(inPool&&N?Math.floor(b/N):0); }
@@ -1161,17 +1172,18 @@ function showToday(){
     (t.rows.length?`<tr class="tot"><td class="l" colspan="4">合計</td><td class="amt">${fmt(t.sales)}</td></tr>`:'')+'</tbody></table></div>';
   $('mask').classList.add('on');
 }
-// 專師個人頁的今日明細：只列本人主要的那幾筆，平分只給合計（不列別人的紀錄）
+// 個人頁的今日明細：只列本人的那幾筆（專師＝自己主要的，平分只給合計；醫師＝自己的），不列別人的紀錄
 function showTodayMine(){
   if(!viewInfo) return;
-  const me=todayMine(viewInfo.name), t=me.t, [y,m]=t.key.split('-').map(Number), day=t.md.split('/')[1];
+  const doc=isDocView(), me=todayMine(viewInfo.name), t=me.t, [y,m]=t.key.split('-').map(Number), day=t.md.split('/')[1];
+  const its=r=>Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、');
   $('dlg').innerHTML=`<h2>今日明細（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    <div class="hint">今天增加 ${fmt(me.total)} 點＝主要 ${fmt(me.promo)} 點＋平分 ${fmt(me.share)} 點。</div>
-    <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>主要點數</th></tr></thead><tbody>`+
-    (me.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(r.doc)}</td><td class="n">${fmt(me.each[i])}</td></tr>`).join('')||
-     '<tr><td class="l mut" colspan="4">今天還沒有你為主要的紀錄</td></tr>')+
-    (me.rows.length?`<tr class="tot"><td class="l" colspan="3">主要合計</td><td class="amt">${fmt(me.promo)}</td></tr>`:'')+`</tbody></table></div>
-    <div class="sub2"><b>平分</b>：今天全體新增 ${t.units} 件，平分池增加 ${fmt(t.pool)} 點，由 ${me.N} 位均分${me.inPool?`，你增加 ${fmt(me.share)} 點`:'（你目前不在平分名單內）'}。</div>`;
+    <div class="hint">今天增加 ${fmt(me.total)} 點${doc?`（${me.rows.length} 筆）`:`＝主要 ${fmt(me.promo)} 點＋平分 ${fmt(me.share)} 點`}。</div>
+    <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">${doc?'主要':'醫師'}</th><th>${doc?'點數':'主要點數'}</th></tr></thead><tbody>`+
+    (me.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${its(r)}</td><td class="l">${esc(doc?r.np:r.doc)}</td><td class="n">${fmt(me.each[i])}</td></tr>`).join('')||
+     `<tr><td class="l mut" colspan="4">${doc?'今天還沒有你的紀錄':'今天還沒有你為主要的紀錄'}</td></tr>`)+
+    (me.rows.length?`<tr class="tot"><td class="l" colspan="3">${doc?'合計':'主要合計'}</td><td class="amt">${fmt(me.promo)}</td></tr>`:'')+`</tbody></table></div>`+
+    (doc?'':`<div class="sub2"><b>平分</b>：今天全體新增 ${t.units} 件，平分池增加 ${fmt(t.pool)} 點，由 ${me.N} 位均分${me.inPool?`，你增加 ${fmt(me.share)} 點`:'（你目前不在平分名單內）'}。</div>`);
   $('mask').classList.add('on');
 }
 
@@ -1473,15 +1485,30 @@ async function forceUpdate(){
 }
 
 // ---------- 個人查看連結 ----------
-// 主任端：替某位專師建立連結後，把「算他點數需要的最少資料」加密放到雲端的獨立節點——試算表網址、專師那一半的
-// 每件點數（主要／平分）、平分人數、他自己各月的確認註記。不含醫師點數、科部、品項點數，也不含別人的註記。
-// 專師端：用連結裡的金鑰解開，再自己即時讀試算表算出點數，所以主任沒開 App 時數字也會跟著試算表更新。
+// 主任端：替某位專師或醫師建立連結後，把「算他點數需要的最少資料」加密放到雲端的獨立節點——試算表網址、
+// 他那個身分的每件點數（專師＝主要／平分＋平分人數；醫師＝醫師那一欄）、他自己各月的確認註記。
+// 不含另一個身分的點數、科部、品項點數、原始點數，也不含別人的註記。
+// 本人端：用連結裡的金鑰解開，再自己即時讀試算表算出點數，所以主任沒開 App 時數字也會跟著試算表更新。
+// 連結在 cfg.views 裡的鍵：專師＝姓名，醫師＝'d|姓名'（viewWho 拆回身分與姓名）
 const _pubHash={}, pubSt={};
 let _pubBusy=false,_pubAgain=false;
 // 連結帶 openExternalBrowser=1：在 LINE 裡點開時會直接交給手機的瀏覽器（LINE 內建瀏覽器不能加到主畫面）
 const viewUrl=tok=>(location.protocol==='file:'?PUBLIC_URL:location.origin+location.pathname.replace(/[^/]*$/,''))+'me.html?openExternalBrowser=1#me='+tok;
 const npRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={promo:Number(r.promo)||0,pool:Number(r.pool)||0}; }); return o; };
-function viewBlob(name){
+const docRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ o[pid]={doc:Number((products[pid]||{}).doc)||0}; }); return o; };
+const viewWho=key=>/^d\|/.test(key)?{role:'d',name:key.slice(2)}:{role:'n',name:key};
+function viewBlob(key){
+  const {role,name}=viewWho(key);
+  if(role==='d'){
+    const live=cfgFor(''), months={}, sets={};
+    Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=docRates(ratesFor(k)); });
+    Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm) return;
+      const m={}, rec=pm.paid&&pm.paid['d|'+name];
+      if(pm.cfg) m.rates=docRates(pm.cfg.products);
+      if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
+      if(Object.keys(m).length) months[k]=m; });
+    return {v:1,role:'d',name,url:sheetUrl(),rates:docRates(live.products),sets,months};
+  }
   const live=cfgFor(''), months={}, sets={};
   Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=npRates(ratesFor(k)); });
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm) return;
@@ -1516,7 +1543,7 @@ async function newView(name){
   if(!sheetUrl()){ alert('要先設定試算表網址，才能建立查看連結。'); return; }
   const old=state.cfg.views[name];
   if(old&&old.tok&&!old.del){
-    if(!confirm(`替「${name}」換一條新的連結？\n舊的連結會立刻失效，要把新連結重新傳給他。`)) return;
+    if(!confirm(`替「${viewWho(name).name}」換一條新的連結？\n舊的連結會立刻失效，要把新連結重新傳給他。`)) return;
     try{ await cloudReq('DELETE',null,parseViewTok(old.tok).id); }
     catch(e){ alert('連不上雲端，舊連結沒辦法停用，請稍後再試。'); return; }
   }
@@ -1527,17 +1554,19 @@ async function newView(name){
 }
 function viewsHtml(){
   if(!window.crypto||!crypto.subtle) return '<div class="hint">這個瀏覽器不支援加密功能，無法建立查看連結。</div>';
-  const vs=state.cfg.views||{};
-  const names=[...new Set([...state.data.roster.np,...liveSharers(),...Object.keys(vs).filter(n=>!vs[n].del)])].filter(Boolean);
-  if(!names.length) return '<div class="hint">讀到試算表的專師名單後，這裡會列出可以建立連結的人。</div>';
-  return `<div class="hint">每個人一條專屬連結。打開後即時看到<b>自己的</b>主要件數、主要點數、平分與確認狀態，看不到別人的，也不能改任何東西。
-      拿到連結的人就看得到，請只傳給本人；外流或人員異動時按「停用」或「換一條新的」。</div>
-    <div class="tw"><table><thead><tr><th class="l">專師</th><th class="l">查看連結</th></tr></thead><tbody>`+
-    names.map(n=>{ const v=vs[n], on=v&&!v.del&&v.tok, k=esc(n);
-      return `<tr><td class="l"><b>${k}</b></td><td class="l" style="white-space:normal">${on
-        ?`<span class="tag ${pubSt[n]==='err'?'no':'ok'}">${pubSt[n]==='err'?'還沒放上雲端（連不上）':'✓ 已建立'}</span> <button class="btn mini" data-act="view-copy" data-n="${k}">複製連結</button> `+
+  const vs=state.cfg.views||{}, live=Object.keys(vs).filter(k=>!vs[k].del);
+  const nps=[...new Set([...state.data.roster.np,...liveSharers(),...live.filter(k=>viewWho(k).role==='n')])].filter(Boolean);
+  const docs=[...new Set([...state.data.roster.doc,...live.filter(k=>viewWho(k).role==='d').map(k=>k.slice(2))])].filter(Boolean);
+  if(!nps.length&&!docs.length) return '<div class="hint">讀到試算表的專師、醫師名單後，這裡會列出可以建立連結的人。</div>';
+  const table=(head,names,pre)=>names.length?`<div class="tw"><table><thead><tr><th class="l">${head}</th><th class="l">查看連結</th></tr></thead><tbody>`+
+    names.map(n=>{ const key=pre+n, v=vs[key], on=v&&!v.del&&v.tok, k=esc(key);
+      return `<tr><td class="l"><b>${esc(n)}</b></td><td class="l" style="white-space:normal">${on
+        ?`<span class="tag ${pubSt[key]==='err'?'no':'ok'}">${pubSt[key]==='err'?'還沒放上雲端（連不上）':'✓ 已建立'}</span> <button class="btn mini" data-act="view-copy" data-n="${k}">複製連結</button> `+
          `<button class="btn mini ghost" data-act="view-new" data-n="${k}">換一條新的</button> <button class="btn mini ghost" data-act="view-del" data-n="${k}">停用</button>`
-        :`<button class="btn mini outline" data-act="view-new" data-n="${k}">建立連結</button>`}</td></tr>`; }).join('')+'</tbody></table></div>';
+        :`<button class="btn mini outline" data-act="view-new" data-n="${k}">建立連結</button>`}</td></tr>`; }).join('')+'</tbody></table></div>':'';
+  return `<div class="hint">每個人一條專屬連結。打開後即時看到<b>自己的</b>件數、點數與確認狀態，看不到別人的，也不能改任何東西。
+      拿到連結的人就看得到，請只傳給本人；外流或人員異動時按「停用」或「換一條新的」。</div>`+
+    table('專師',nps,'')+table('醫師',docs,'d|');
 }
 // ---- 裝成手機 App（個人查看頁最下面的說明） ----
 let _installEvt=null;   // Android／電腦 Chrome 可以由網頁按鈕叫出安裝視窗；iPhone 只能請使用者自己「加入主畫面」
@@ -1554,17 +1583,19 @@ function installHtml(){
   if(_installEvt) return box('<button class="btn" data-act="me-install">安裝成 App</button>　按下去之後，主畫面會多一個圖示，點它就直接是你自己的點數。');
   return box('點瀏覽器<b>右上角的「⋮」</b> →「<b>加到主畫面</b>」或「<b>安裝應用程式</b>」。<br>之後從主畫面的圖示打開，就直接是你自己的點數。');
 }
-// ---- 專師端 ----
-// 把解開的內容套成一般的設定格式，之後照常用 calcMonth 算。平分名單只知道人數，用佔位名字補滿
+// ---- 本人端 ----
+// 把解開的內容套成一般的設定格式，之後照常用 calcMonth 算。專師：平分名單只知道人數，用佔位名字補滿；醫師：沒有平分名單
 function applyView(b){
-  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]={doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0,cost:0}; }); return o; };
-  const pool=(n,inPool)=>{ const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
+  const doc=b.role==='d';
+  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]=doc?{doc:Number(r[pid].doc)||0,promo:0,pool:0,fund:0,price:0,cost:0}
+    :{doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0,cost:0}; }); return o; };
+  const pool=(n,inPool)=>{ if(doc) return []; const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
   state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
   state.cfg.rateSets={}; Object.keys(b.sets||{}).forEach(k=>{ state.cfg.rateSets[k]={r:full(b.sets[k]),t:0}; });
   state.pay={};
   Object.keys(b.months||{}).forEach(k=>{ const m=b.months[k], pm=state.pay[k]={paid:{}};
     if(m.rates) pm.cfg={products:full(m.rates),sharers:pool(m.n,m.inPool)};
-    if(m.paid) pm.paid['n|'+b.name]={amt:m.paid.amt,at:m.paid.at,t:1}; });
+    if(m.paid) pm.paid[(doc?'d|':'n|')+b.name]={amt:m.paid.amt,at:m.paid.at,t:1}; });
 }
 async function loadView(){
   if(!VIEW) return;
@@ -1575,7 +1606,7 @@ async function loadView(){
     if(blob&&blob.data){ try{ b=await unseal(blob,VIEW.key); }catch(e){ b=null; } }
     if(!b){ viewInfo=null; viewErr='gone'; }
     else{ const first=!viewInfo, sig=stable(b);
-      if(first||viewInfo.sig!==sig){ applyView(b); viewInfo={name:b.name,inPool:!!b.inPool,sig}; }
+      if(first||viewInfo.sig!==sig){ applyView(b); viewInfo={name:b.name,role:b.role==='d'?'d':'n',inPool:!!b.inPool,sig}; }
       viewErr=null;
       if(first){ renderAll(); refresh(true); return; }
     }
@@ -1596,47 +1627,52 @@ function renderMe(ks){
     :viewErr==='gone'?'這個連結已經停用或不正確，請向主任索取新的連結。'+paste('拿到新連結後貼在這裡')
     :viewErr?'目前連不上雲端，請確認網路後按最下面的「更新」。':'載入中…');
   if(!cur) return blank(busy?'讀取試算表中…':fail?'讀不到試算表，請稍後按最下面的「更新」。':'目前還沒有紀錄。');
-  const pk='n|'+name;
+  const doc=isDocView(), pk=mePk();
   const mine=k=>{ const c=calcMonth(k); return {c,p:people(c).find(x=>x.pk===pk)||{it:{},promo:0,share:0,amt:0,rec:paidOf(k)[pk]||null}}; };
   const all=ks.map(k=>Object.assign({k},mine(k)));
   const stOf={}; all.forEach(({k,p})=>{ stOf[k]=!p.amt&&!p.rec?'empty':p.rec&&p.rec.amt>=p.amt?'done':p.rec?'part':'none'; });
   renderMonthBar(ks,k=>stOf[k]||'empty','<span><i class="done"></i>已確認</span><span><i class="none"></i>還沒確認</span>');
-  const {c,p}=all.find(x=>x.k===cur), pids=monthPids(c).filter(pid=>p.it[pid]), rows=c.rows.filter(r=>r.np===name);
-  // 點數說明：這個月適用的各品項每件點數（主要＝負責那一件的人拿的；平分＝每件另外給全體平分名單均分的）
-  const N=c.cfg.sharers.length;
+  const {c,p}=all.find(x=>x.k===cur), pids=monthPids(c).filter(pid=>p.it[pid]), rows=c.rows.filter(r=>(doc?r.doc:r.np)===name);
+  // 點數說明：這個月適用的各品項每件點數（專師：主要＝負責那一件的人拿的、平分＝每件另外給全體平分名單均分的；醫師：就是醫師那一欄）
+  const N=c.cfg.sharers.length, f=doc?'doc':'promo';
   const expl=[...new Set([...productList().map(x=>x.id),...Object.keys(c.cfg.products||{})])]
-    .map(pid=>({pid,r:rateOf(c.cfg,pid)})).filter(x=>x.r.promo||x.r.pool);
+    .map(pid=>({pid,r:rateOf(c.cfg,pid)})).filter(x=>doc?x.r.doc:(x.r.promo||x.r.pool));
   const paidTxt=p.rec?`<span class="tag ok">✓ 已確認 ${shortDate(p.rec.at)}　${fmt(p.rec.amt)} 點</span>`+
       (p.rec.amt!==p.amt?`<div class="diff">確認之後又有新的紀錄：目前累計 ${fmt(p.amt)} 點，和已確認的差 ${fmt(p.amt-p.rec.amt)} 點，等主任再確認。</div>`:'')
     :(p.amt?'<span class="tag no">尚未確認</span>':'<span class="mut">—</span>');
   const me=cur===todayKey()?todayMine(name):null;
-  const npTot=people(c).filter(x=>x.role==='n').reduce((t,x)=>t+x.amt,0), pct=npTot?p.amt/npTot*100:null;   // 池子占比
+  const npTot=people(c).filter(x=>x.role==='n').reduce((t,x)=>t+x.amt,0), pct=npTot?p.amt/npTot*100:null;   // 池子占比（專師頁才有）
+  const itTxt=`${rows.length} 筆${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${p.it[pid]}`).join('・'):''}`;
   top.innerHTML=`<div class="mhead"><h2>${keyLabel(cur)}</h2><span class="mut">${esc(name)}</span></div>
     ${me?`<button class="today" data-act="today"><span class="tl">今日增加<small>${me.t.md}</small></span><span class="tv">${fmt(me.total)}<small> 點</small></span>
-      <span class="tr">主要 ${fmt(me.promo)}＋平分 ${fmt(me.share)}　看明細 ›</span></button>`:''}
+      <span class="tr">${doc?`${me.rows.length} 筆`:`主要 ${fmt(me.promo)}＋平分 ${fmt(me.share)}`}　看明細 ›</span></button>`:''}
     <div class="tiles sales">
       <div class="tile big clk" data-act="trend" data-m="myamt" role="button"><span class="tg">📈</span><div class="v">${fmt(p.amt)}</div><div class="l">這個月我的點數</div>
-        <div class="s">${vsPrevHtml('myamt',cur)}</div><div class="s">主要 ${fmt(p.promo)}＋平分 ${fmt(p.share)}</div></div>
-      <div class="tile big clk" data-act="trend" data-m="myunits" role="button"><span class="tg">📈</span><div class="v">${sumVals(p.it)}</div><div class="l">我的主要件數</div>
-        <div class="s">${vsPrevHtml('myunits',cur)}</div><div class="s">${rows.length} 筆${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${p.it[pid]}`).join('・'):''}</div></div>
+        <div class="s">${vsPrevHtml('myamt',cur)}</div>${doc?'':`<div class="s">主要 ${fmt(p.promo)}＋平分 ${fmt(p.share)}</div>`}</div>
+      <div class="tile big clk" data-act="trend" data-m="myunits" role="button"><span class="tg">📈</span><div class="v">${sumVals(p.it)}</div><div class="l">${doc?'我的件數':'我的主要件數'}</div>
+        <div class="s">${vsPrevHtml('myunits',cur)}</div><div class="s">${itTxt}</div></div>
     </div>
-    <div class="tiles"><div class="tile" style="grid-column:1/-1"><div class="l">池子占比</div><div class="v">${pct==null?'—':pct.toFixed(1)+'%'}</div>
-      <div class="s">我的點數 ÷ 全體專師的點數</div><div class="bar"><span style="width:${pct==null?0:Math.min(100,pct)}%"></span></div></div></div>
-    ${mixCard('我的點數的組成',[{label:'平分',note:'',v:p.share,c:'#9aa7b8'}].concat(pids.map(pid=>({label:prodName(pid),note:'主要 '+p.it[pid]+' 件',v:p.it[pid]*rateOf(c.cfg,pid).promo,c:prodColor(pid)}))))}
-    <details class="card sec" data-sec="me-expl"${isOpen('me-expl')?' open':''}><summary><span>點數說明</span></summary>
-      <div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>主要</th><th>平分</th><th>平分每人（÷${N} 位）</th></tr></thead><tbody>`+
+    ${doc?'':`<div class="tiles"><div class="tile" style="grid-column:1/-1"><div class="l">池子占比</div><div class="v">${pct==null?'—':pct.toFixed(1)+'%'}</div>
+      <div class="s">我的點數 ÷ 全體專師的點數</div><div class="bar"><span style="width:${pct==null?0:Math.min(100,pct)}%"></span></div></div></div>`}
+    ${mixCard('我的點數的組成',(doc?[]:[{label:'平分',note:'',v:p.share,c:'#9aa7b8'}]).concat(pids.map(pid=>({label:prodName(pid),note:(doc?'':'主要 ')+p.it[pid]+' 件',v:p.it[pid]*rateOf(c.cfg,pid)[f],c:prodColor(pid)}))))}
+    <details class="card sec" data-sec="me-expl"${isOpen('me-expl')?' open':''}><summary><span>點數說明</span></summary>`+
+    (doc?`<div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>點數</th></tr></thead><tbody>`+
+      (expl.map(x=>`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.doc)}</td></tr>`).join('')||
+       '<tr><td class="l mut" colspan="2">還沒有設定</td></tr>')+`</tbody></table></div>
+      <div class="sub2">這個月：你的各品項件數 × 上表的點數，加起來＝ ${fmt(p.amt)} 點。</div></details>`
+    :`<div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>主要</th><th>平分</th><th>平分每人（÷${N} 位）</th></tr></thead><tbody>`+
       (expl.map(x=>`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.promo)}</td><td class="n">${fmt(x.r.pool)}</td><td class="n">${N?fmt2(x.r.pool/N):'—'}</td></tr>`).join('')||
        '<tr><td class="l mut" colspan="4">還沒有設定</td></tr>')+`</tbody></table></div>
       <div class="sub2"><b>主要</b>：這一件由你主要負責時，你得到的點數。<b>平分</b>：每一件另外提供、由平分名單上的 ${N} 位均分的點數，不管是誰主要，名單上每個人都有${p.share||!c.pool?'':'（你目前不在平分名單內）'}。<br>
-      這個月：主要 ${fmt(p.promo)} 點（自己主要的件數 × 上表的主要點數）＋平分 ${fmt(p.share)} 點（全體平分池 ${fmt(c.pool)} 點 ÷ ${N} 位）＝ ${fmt(p.amt)} 點。</div></details>`;
-  const each=r=>Object.keys(r.it).reduce((t,pid)=>t+r.it[pid]*rateOf(c.cfg,pid).promo,0);
-  el.innerHTML=`<details class="card sec" data-sec="me-rows"${isOpen('me-rows')?' open':''}><summary><span>這個月的主要明細</span><span class="sum-amt">${rows.length} 筆</span></summary>
-      <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th>主要點數</th></tr></thead><tbody>`+
-      (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(r.doc)}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
-       '<tr><td class="l mut" colspan="5">這個月還沒有你為主要的紀錄</td></tr>')+`</tbody></table></div></details>
+      這個月：主要 ${fmt(p.promo)} 點（自己主要的件數 × 上表的主要點數）＋平分 ${fmt(p.share)} 點（全體平分池 ${fmt(c.pool)} 點 ÷ ${N} 位）＝ ${fmt(p.amt)} 點。</div></details>`);
+  const each=r=>Object.keys(r.it).reduce((t,pid)=>t+r.it[pid]*rateOf(c.cfg,pid)[f],0);
+  el.innerHTML=`<details class="card sec" data-sec="me-rows"${isOpen('me-rows')?' open':''}><summary><span>${doc?'這個月的明細':'這個月的主要明細'}</span><span class="sum-amt">${rows.length} 筆</span></summary>
+      <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">${doc?'主要':'醫師'}</th><th>${doc?'點數':'主要點數'}</th></tr></thead><tbody>`+
+      (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(doc?r.np:r.doc)}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
+       `<tr><td class="l mut" colspan="5">${doc?'這個月還沒有你的紀錄':'這個月還沒有你為主要的紀錄'}</td></tr>`)+`</tbody></table></div></details>
     <details class="card sec" data-sec="me-all"${isOpen('me-all')?' open':''}><summary><span>各月合計</span><span class="sum-amt">${all.length} 個月</span></summary>
-      <div class="tw"><table><thead><tr><th class="l">月份</th><th>件數</th><th>主要</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
-      all.map(({k,p})=>`<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td><td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`+
+      <div class="tw"><table><thead><tr><th class="l">月份</th><th>件數</th>${doc?'':'<th>主要</th><th>平分</th>'}<th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
+      all.map(({k,p})=>`<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td>${doc?'':`<td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td>`}<td class="amt">${fmt(p.amt)}</td>`+
         `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`).join('')+`</tbody></table></div></details>
     <div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
       <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>
@@ -1664,7 +1700,7 @@ function act(a,t,ev){
   else if(a==='view-new') newView(t.dataset.n);
   else if(a==='view-del'){
     const n=t.dataset.n, v=state.cfg.views[n]; if(!v||v.del) return;
-    if(!confirm(`停用「${n}」的查看連結？\n停用後那條連結立刻失效，之後可以再建立新的。`)) return;
+    if(!confirm(`停用「${viewWho(n).name}」的查看連結？\n停用後那條連結立刻失效，之後可以再建立新的。`)) return;
     state.cfg.views[n]={del:1,t:Date.now(),tok:v.tok}; saveState(); renderCfg(); publishViews();
   }
   else if(a==='view-copy'){
