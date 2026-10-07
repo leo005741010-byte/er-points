@@ -176,6 +176,7 @@ input:focus{outline:2px solid #9cc0e6;outline-offset:0}
 .dlg h2 .btn{margin-left:auto}
 .dlg .cumh{font-weight:700;color:var(--navy-dark);font-size:14.5px;margin:12px 0 0}
 .dlg .cumh small{font-weight:400;color:var(--mut);margin-left:6px}
+.hru{font-size:12px;color:var(--mut);font-weight:400}
 .lg2{display:flex;gap:6px 16px;flex-wrap:wrap;justify-content:center;font-size:12.5px;color:var(--txt);margin:-4px 0 8px}
 .lg2 i{display:inline-block;width:24px;border-top:3px solid var(--navy);vertical-align:middle;margin-right:6px}.lg2 i.d{border-top:2px dashed #2a9d8f}
 .empty{text-align:center;color:var(--mut);padding:40px 10px}
@@ -247,7 +248,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.07a';
+const APP_VER='2026.10.07b';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -323,6 +324,7 @@ function normState(s){
   s.cfg.rateSets=s.cfg.rateSets||{};   // 各月自己的每件點數 {'115-10':{r:{品項:{…}},t}｜{del:1,t}}，見 ratesFor()
   s.cfg.hist=s.cfg.hist||{};   // 試算表開始記錄以前的月份 {'115-01':{cost,it:{品項:件數},t}｜{del:1,t}}，只給折線圖用，見 histOf()
   if(!Array.isArray(s.cfg.sharers)) s.cfg.sharers=null;   // null＝跟著試算表統計頁的專師名單
+  s.led=s.led||{};   // 醫師累積點數的確認紀錄 {id:{pk:'d|姓名',amt,at,note,t}｜{del:1,t}}，見 docCumAll()
   s.data=s.data||{}; s.data.months=s.data.months||{}; s.data.extra=s.data.extra||{};
   s.data.roster=s.data.roster||{}; s.data.roster.np=s.data.roster.np||[]; s.data.roster.doc=s.data.roster.doc||[];
   // {'115-09':{cfg:{products,sharers}（第一次註記時的設定快照）,cfgT,paid:{'d|姓名':{amt,at,t}｜{del:1,t}}}}
@@ -411,7 +413,7 @@ function calcMonth(key,cfgOverride){
     c.prod[pid]=(c.prod[pid]||0)+q; c.units+=q;
     c.sales+=q*rt.price; if(!rt.price) c.noPrice[pid]=1;
     c.cost+=q*rt.cost;
-    const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc;
+    const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0,sales:0}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc; d.sales+=q*rt.price;
     const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=q*rt.promo;
     c.pool+=q*rt.pool; c.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
     if(rt.fund){ c.fund+=q*rt.fund; c.fundIt[pid]=(c.fundIt[pid]||0)+q; }
@@ -432,7 +434,7 @@ function monthPids(c){
 function people(c){
   const paid=paidOf(c.key), out=[], seen={};
   Object.keys(c.doc).forEach(n=>{ const d=c.doc[n];
-    out.push({role:'d',name:n,pk:'d|'+n,it:d.it,promo:0,share:0,amt:Math.round(d.amt),payable:!!n}); });
+    out.push({role:'d',name:n,pk:'d|'+n,it:d.it,promo:0,share:0,amt:Math.round(d.amt),sales:Math.round(d.sales||0),payable:!!n}); });
   Object.keys(c.np).forEach(n=>{ const p=c.np[n];
     out.push({role:'n',name:n,pk:'n|'+n,it:p.it,promo:Math.round(p.promo),share:p.share,amt:Math.round(p.promo)+p.share,payable:!!n}); });
   if(c.fund>0) out.push({role:'f',name:'科部',pk:FUND_PK,it:c.fundIt,promo:0,share:0,amt:Math.round(c.fund),payable:true});
@@ -444,7 +446,7 @@ function people(c){
 }
 function monthTotals(list){
   const t={due:0,paid:0,unpaid:0,over:0,todo:0};
-  list.forEach(p=>{ if(!p.payable) return; t.due+=p.amt;
+  list.forEach(p=>{ if(!p.payable||p.role==='d') return; t.due+=p.amt;   // 醫師改用累積點數（docCumAll），不算在逐月確認裡
     const got=p.rec?p.rec.amt:0; t.paid+=got;
     if(p.amt>got){ t.unpaid+=p.amt-got; t.todo++; } else if(got>p.amt) t.over+=got-p.amt; });
   t.state=!t.due&&!t.paid?'empty':t.todo===0?'done':t.paid>0?'part':'none';
@@ -709,6 +711,7 @@ async function refresh(silent){
     const r=mergeResult(await fetchSheet(url),'sheet');
     fail=null; if(r.delta) delta={txt:r.delta,at:Date.now()};
     busy=false;
+    loadSched();
     if(r.changed) publishViews();
     if(r.changed||!silent||!cur) renderAll(); else renderStatus();
   }catch(e){
@@ -869,7 +872,7 @@ function renderMonth(){
     <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">主要 ${fmt(promoTot)}＋平分 ${fmt(c.share*c.cfg.sharers.length)}</div></div>
     ${fp?`<div class="tile"><div class="l">科部</div><div class="v">${fmt(fp.amt)}</div><div class="s">不屬於個人</div></div>`:''}
     <div class="tile ${t.unpaid?'due':'ok'}"><div class="l">${t.unpaid?'還沒確認':'確認進度'}</div><div class="v">${t.unpaid?fmt(t.unpaid):(t.due?'全部確認':'—')}</div>
-      <div class="s">已確認 ${fmt(t.paid)}／共 ${fmt(t.due)}${t.over?`（多 ${fmt(t.over)}）`:''}</div><div class="bar"><span style="width:${t.due?Math.min(100,t.paid/t.due*100):0}%"></span></div></div>
+      <div class="s">專師${fp?'＋科部':''}　已確認 ${fmt(t.paid)}／共 ${fmt(t.due)}${t.over?`（多 ${fmt(t.over)}）`:''}</div><div class="bar"><span style="width:${t.due?Math.min(100,t.paid/t.due*100):0}%"></span></div></div>
   </div>`;
   top.innerHTML=h; h='';   // 月份標題＋數字磚在點數卡上方，醫師／專師表在下方
   const row=(p,cells)=>`<tr class="${!p.payable?'bad':p.rec&&p.rec.amt===p.amt?'paid':''}"><td class="l nmc">${nameBtn(p)}</td>${cells}<td class="st">${payCell(p)}</td></tr>`;
@@ -878,11 +881,27 @@ function renderMonth(){
     return !a.length?'':done===a.length?`<span class="tag ok">✓ 全部${okW}</span>`:`<span class="tag no">${okW} ${done}／${a.length} 位</span>`; };
   const sec=(id,title,amt,tag,body)=>`<details class="card sec" data-sec="${id}"${isOpen(id)?' open':''}><summary><span>${title}</span><span class="sum-amt">${fmt(amt)} 點</span>${tag}</summary>${body}</details>`;
   const allBtn=(role,who)=>canPay(role)?`<button class="btn mini" data-act="payall" data-role="${role}">${who}全部確認</button>`:'';
-  // 醫師
-  const dShow=docs.filter(p=>p.amt>0||p.rec||sumVals(p.it));
-  h+=sec('d','醫師點數',dTot,prog(docs,'已確認'),`<div class="sec-head"><div class="hint">點姓名可看逐筆明細。</div>${allBtn('d','醫師')}</div><div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th class="l">確認</th></tr></thead><tbody>`+
-    (dShow.length?dShow.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+3}">本月沒有紀錄</td></tr>`)+
-    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="amt">${fmt(dTot)}</td><td class="st"></td></tr></tbody></table></div>`);
+  // 醫師：不逐月確認（改看下面的「醫師累積點數」）。多三欄＝品項總點數、上班時數（讀急診醫師班表）、每小時品項總點數
+  const dList=docs.filter(p=>p.amt>0||sumVals(p.it)).map(p=>({p,h:p.name?docHours(p.name,cur):null}));
+  // 班表上這個月有上班、但沒有任何紀錄的醫師也列出來（每小時是 0），合計的每小時才是整個單位的
+  if(schedHrs&&schedHrs.m[cur]) schedHrs.names.forEach(n=>{ const hh=docHours(n,cur); if(hh&&!dList.some(x=>x.p.name===n)) dList.push({p:{role:'d',name:n,pk:'d|'+n,it:{},amt:0,sales:0,payable:true,idle:1},h:hh}); });
+  const hSum=dList.reduce((t,x)=>t+(x.h||0),0), phTxt=(sl,hh)=>{ const v=perHour(sl,hh); return v==null?'—':fmt(v); };
+  const drow=({p,h:hh})=>`<tr class="${!p.payable?'bad':''}"><td class="l nmc">${p.idle?`<b>${esc(p.name)}</b>`:nameBtn(p)}</td>${pids.map(pid=>qtd(p.it[pid],pid)).join('')}<td class="amt">${fmt(p.amt)}</td>`+
+    `<td class="n sub" data-l="品項總點數">${fmt(p.sales)}</td><td class="n sub" data-l="上班">${hh==null?'—':hh+'<span class="hru"> 小時</span>'}</td><td class="n sub" data-l="每小時">${phTxt(p.sales,hh)}</td></tr>`;
+  h+=sec('d','醫師點數',dTot,'',`<div class="sec-head"><div class="hint">點姓名可看逐筆明細。上班時數讀自急診醫師班表${cur===todayKey()?'（這個月算到今天）':''}，不含支援其他單位的班；每小時＝品項總點數 ÷ 上班時數。${schedHrs&&schedHrs.m[cur]?'':'<b>目前還沒讀到班表。</b>'}</div></div>
+    <div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th>品項總點數</th><th>上班時數</th><th>每小時品項總點數</th></tr></thead><tbody>`+
+    (dList.length?dList.map(drow).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
+    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="amt">${fmt(dTot)}</td><td class="n sub" data-l="品項總點數">${fmt(c.sales)}</td><td class="n sub" data-l="上班">${hSum?hSum+'<span class="hru"> 小時</span>':'—'}</td><td class="n sub" data-l="每小時">${phTxt(c.sales,hSum)}</td></tr></tbody></table></div>`);
+  // 醫師累積點數（不分月份）：以 1,000 點為一單位，有確認時按「記一筆」
+  const cums=Object.values(docCumAll()).filter(x=>x.total||x.recs.length).sort((a,b)=>b.left-a.left||a.name.localeCompare(b.name,'zh-Hant'));
+  const cT=f=>cums.reduce((t,x)=>t+x[f],0);
+  h+=`<details class="card sec" data-sec="led"${isOpen('led')?' open':''}><summary><span>醫師累積點數</span><span class="sum-amt">尚未確認 ${fmt(cT('left'))} 點</span>${cT('can')?`<span class="tag no">可確認 ${fmt(cT('can'))}</span>`:''}</summary>
+    <div class="sec-head"><div class="hint">醫師的點數不逐月確認：全部月份累積起來，以 ${fmt(LED_UNIT)} 點為一單位，有確認時按「記一筆」；沒滿 ${fmt(LED_UNIT)} 的留到下次。這張表不分月份。</div></div>
+    <div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th><th>累積點數</th><th>已確認</th><th>尚未確認</th><th>可確認</th><th class="l"></th></tr></thead><tbody>`+
+    (cums.map(x=>`<tr><td class="l nmc"><b>${esc(x.name)}</b></td><td class="n sub" data-l="累積">${fmt(x.total)}</td><td class="n sub" data-l="已確認">${fmt(x.paid)}</td><td class="amt">${fmt(x.left)}</td><td class="n sub" data-l="可確認">${fmt(x.can)}</td>`+
+      `<td class="st"><button class="btn mini${x.can?'':' ghost'}" data-act="led" data-k="${esc(x.pk)}">${x.can?'記一筆':'看紀錄'}</button></td></tr>`).join('')||'<tr><td class="l mut" colspan="6">還沒有紀錄</td></tr>')+
+    (cums.length?`<tr class="tot"><td class="l nmc">合計</td><td class="n sub" data-l="累積">${fmt(cT('total'))}</td><td class="n sub" data-l="已確認">${fmt(cT('paid'))}</td><td class="amt">${fmt(cT('left'))}</td><td class="n sub" data-l="可確認">${fmt(cT('can'))}</td><td class="st"></td></tr>`:'')+
+    `</tbody></table></div></details>`;
   // 專師
   h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`<div class="sec-head"><div class="hint">件數＝本人為主要的件數。平分：本月平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點（主要的人自己也分得到）。</div>${allBtn('n','專師')}</div>
     <div class="tw"><table class="ppl"><thead><tr><th class="l">專師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>主要點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
@@ -905,11 +924,12 @@ function renderYear(){
   const years=[...new Set(ks.map(k=>k.split('-')[0]))];
   if(!yearSel||!years.includes(yearSel)) yearSel=(cur||ks[ks.length-1]).split('-')[0];
   const mks=ks.filter(k=>k.startsWith(yearSel+'-')), per={}, colTot={};
-  mks.forEach(k=>{ colTot[k]={due:0,paid:0};
+  mks.forEach(k=>{ colTot[k]={due:0,owe:0};
     people(calcMonth(k)).forEach(p=>{ if(!p.payable||(!p.amt&&!p.rec)) return;
       (per[p.pk]||(per[p.pk]={role:p.role,name:p.name,m:{}})).m[k]=p;
-      colTot[k].due+=p.amt; colTot[k].paid+=p.rec?p.rec.amt:0; }); });
+      colTot[k].due+=p.amt; if(p.role!=='d') colTot[k].owe+=Math.max(0,p.amt-(p.rec?p.rec.amt:0)); }); });   // 醫師改用累積點數，不列入「還沒確認」
   const cell=p=>{ if(!p) return '<td class="z">—</td>';
+    if(p.role==='d') return `<td class="ycell">${fmt(p.amt)}</td>`;
     if(p.rec&&p.rec.amt===p.amt) return `<td class="ycell p" title="已確認 ${esc(p.rec.at||'')}">${fmt(p.amt)} ✓</td>`;
     if(p.rec) return `<td class="ycell w" title="已確認 ${fmt(p.rec.amt)}，現在是 ${fmt(p.amt)}">${fmt(p.amt)} ⚠</td>`;
     return `<td class="ycell u" title="還沒確認">${fmt(p.amt)}</td>`; };
@@ -920,14 +940,14 @@ function renderYear(){
       .sort((a,b)=>b.tot-a.tot);
     if(!rows.length) return '';
     return `<tr><th class="l" colspan="${mks.length+3}">${title}</th></tr>`+rows.map(r=>
-      `<tr><td class="l">${esc(r.x.name)}</td>${mks.map(k=>cell(r.x.m[k])).join('')}<td class="amt">${fmt(r.tot)}</td><td class="ycell ${r.owe?'u':'p'}">${r.owe?fmt(r.owe):'✓'}</td></tr>`).join('');
+      `<tr><td class="l">${esc(r.x.name)}</td>${mks.map(k=>cell(r.x.m[k])).join('')}<td class="amt">${fmt(r.tot)}</td>${role==='d'?'<td class="z">—</td>':`<td class="ycell ${r.owe?'u':'p'}">${r.owe?fmt(r.owe):'✓'}</td>`}</tr>`).join('');
   };
-  const gDue=mks.reduce((s,k)=>s+colTot[k].due,0), gPaid=mks.reduce((s,k)=>s+colTot[k].paid,0);
+  const gDue=mks.reduce((s,k)=>s+colTot[k].due,0), gOwe=mks.reduce((s,k)=>s+colTot[k].owe,0);
   el.innerHTML=(years.length>1?`<div class="row" style="margin:0 0 10px">年度 <select data-act="year">${years.map(y=>`<option${y===yearSel?' selected':''}>${y}</option>`).join('')}</select></div>`:'')+
-    `<div class="hint">綠色 ✓＝已確認；紅色＝還沒確認；⚠＝確認之後試算表又有變動、點數對不上。</div>
+    `<div class="hint">綠色 ✓＝已確認；紅色＝還沒確認；⚠＝確認之後試算表又有變動、點數對不上。醫師不逐月確認，看當月畫面的「醫師累積點數」。</div>
     <div class="tw"><table><thead><tr><th class="l">${yearSel}年</th>${mks.map(k=>`<th>${Number(k.split('-')[1])}月</th>`).join('')}<th>合計</th><th>還沒確認</th></tr></thead><tbody>`+
     sect('d','醫師')+sect('n','專師')+sect('f','科部')+
-    `<tr class="tot"><td class="l">合計</td>${mks.map(k=>`<td class="n">${fmt(colTot[k].due)}</td>`).join('')}<td class="amt">${fmt(gDue)}</td><td class="n">${fmt(Math.max(0,gDue-gPaid))}</td></tr></tbody></table></div>`;
+    `<tr class="tot"><td class="l">合計</td>${mks.map(k=>`<td class="n">${fmt(colTot[k].due)}</td>`).join('')}<td class="amt">${fmt(gDue)}</td><td class="n">${fmt(gOwe)}</td></tr></tbody></table></div>`;
 }
 function rateDerived(r){ return {np:r.promo+r.pool,all:r.doc+r.promo+r.pool+r.fund}; }
 // 每件點數＋平分名單：放在每月畫面正上方。
@@ -1057,6 +1077,8 @@ const TREND={
   diff:   {title:'總點數差',    unit:'點', get:k=>{ const c=calcMonth(k); return c.sales-c.cost; }, hist:k=>histSales(k)-histCost(k), est:1},
   myamt:  {title:'我的點數',    unit:'點', get:k=>meOf(k).amt},
   myunits:{get title(){ return isDocView()?'我的件數':'我的主要件數'; },unit:'件', get:k=>sumVals(meOf(k).it)},
+  mysales:{title:'我的品項總點數',unit:'點', get:k=>meOf(k).sales||0},
+  myrate: {title:'每小時品項總點數',unit:'點', get:k=>{ const hh=viewInfo?docHours(viewInfo.name,k):null; return hh?(meOf(k).sales||0)/hh:0; }},
 };
 const pctVs=(v,pv)=>pv?(v-pv)/Math.abs(pv)*100:null;
 const pctHtml=d=>`<span class="${d>=0?'up':'dn'}">${d>=0?'▲ +':'▼ '}${d.toFixed(1)}%</span>`;
@@ -1143,7 +1165,7 @@ function cumHtml(m){
     `<div class="cumh">逐月趨勢</div>`;
 }
 function showTrend(m){
-  const T=TREND[m]; if(!T||(VIEW&&!/^my/.test(m))) return;
+  const T=TREND[m]; if(!T||(VIEW&&(!/^my/.test(m)||(/^my(sales|rate)$/.test(m)&&!isDocView())))) return;   // 個人頁只看自己的；品項總點數那兩張只有醫師頁有
   const pts=trendPts(m), anyH=pts.some(p=>p.h);
   const itTxt=k=>{ const it=histOf(k).it||{}; return Object.keys(it).filter(pid=>it[pid]).map(pid=>`${esc(prodName(pid))} ${it[pid]}`).join('・'); };
   const cumH=cumHtml(m);
@@ -1236,6 +1258,56 @@ function doPayAll(role){
   saveState(); renderAll();
 }
 
+// ---------- 醫師累積點數 ----------
+// 醫師的點數不逐月確認：全部月份累積起來，以 1,000 點為一單位、不定期確認，每次記一筆。
+// 已確認＝這裡記的每一筆（state.led）＋改版前逐月按過的確認（state.pay 裡 d| 開頭的，當成一筆舊紀錄，id 是 'm:月份'）
+const LED_UNIT=1000;
+function docCumAll(){
+  const o={}, get=n=>o[n]||(o[n]={name:n,pk:'d|'+n,total:0,paid:0,recs:[]});
+  allKeys().forEach(k=>{ const c=calcMonth(k), paid=paidOf(k);
+    Object.keys(c.doc).forEach(n=>{ if(n) get(n).total+=Math.round(c.doc[n].amt); });
+    Object.keys(paid).forEach(pk=>{ if(pk[0]==='d'&&pk.slice(2)) get(pk.slice(2)).recs.push({id:'m:'+k,amt:Number(paid[pk].amt)||0,at:paid[pk].at||'',note:keyLabel(k)+'（先前逐月確認）'}); }); });
+  Object.keys(state.led||{}).forEach(id=>{ const r=state.led[id]; if(r&&!r.del&&/^d\|./.test(r.pk||'')) get(r.pk.slice(2)).recs.push({id,amt:Number(r.amt)||0,at:r.at||'',note:r.note||''}); });
+  Object.values(o).forEach(x=>{ x.recs.sort((a,b)=>String(a.at).localeCompare(String(b.at))); x.paid=x.recs.reduce((t,r)=>t+r.amt,0);
+    x.left=x.total-x.paid; x.can=Math.max(0,Math.floor(x.left/LED_UNIT)*LED_UNIT); });
+  return o;
+}
+const docCum=name=>docCumAll()[name]||{name,pk:'d|'+name,total:0,paid:0,left:0,can:0,recs:[]};
+// 三塊小磚：累積／已確認／尚未確認（主任的記錄視窗與醫師個人頁共用）
+const cumTiles=x=>`<div class="tiles" style="margin:8px 0 4px"><div class="tile"><div class="l">累積點數</div><div class="v">${fmt(x.total)}</div><div class="s">全部月份加總</div></div>
+  <div class="tile"><div class="l">已確認</div><div class="v">${fmt(x.paid)}</div><div class="s">${x.recs.length} 筆</div></div>
+  <div class="tile ${x.can?'due':'ok'}" style="grid-column:1/-1"><div class="l">尚未確認</div><div class="v">${fmt(x.left)}</div><div class="s">其中可確認 ${fmt(x.can)}（${fmt(LED_UNIT)} 的倍數）</div></div></div>`;
+function showLed(pk){
+  const x=docCum(pk.slice(2)), k=esc(pk);
+  $('dlg').innerHTML=`<h2>${esc(x.name)}・累積點數<button class="btn mini ghost" data-act="close">關閉</button></h2>${cumTiles(x)}
+    <div class="cumh">記一筆確認</div>
+    <div class="row" style="margin:6px 0"><input type="number" id="led-amt" inputmode="numeric" min="0" step="${LED_UNIT}" value="${x.can||''}" style="width:110px"> 點
+      <input type="date" id="led-at" value="${today()}"><input type="text" id="led-note" placeholder="備註（可不填）" autocomplete="off" style="flex:1;min-width:120px">
+      <button class="btn" data-act="led-add" data-k="${k}">儲存</button></div>
+    <div class="sub2" style="margin-top:0">以 ${fmt(LED_UNIT)} 點為一單位，不必每個月確認；沒確認完的留到下次。</div>
+    <div class="cumh">確認紀錄</div>
+    <div class="tw"><table><thead><tr><th class="l">日期</th><th>點數</th><th class="l">備註</th><th></th></tr></thead><tbody>`+
+    (x.recs.slice().reverse().map(r=>`<tr><td class="l">${esc(r.at)}</td><td class="n">${fmt(r.amt)}</td><td class="l" style="white-space:normal">${esc(r.note)}</td><td class="n"><button class="btn mini ghost" data-act="led-del" data-k="${k}" data-id="${esc(r.id)}">刪除</button></td></tr>`).join('')||
+     '<tr><td class="l mut" colspan="4">還沒有確認紀錄</td></tr>')+'</tbody></table></div>';
+  $('mask').classList.add('on');
+}
+function ledAdd(pk){
+  const x=docCum(pk.slice(2)), amt=Math.round(Number(($('led-amt')||{}).value)), at=($('led-at')||{}).value||today(), note=String(($('led-note')||{}).value||'').trim();
+  if(!(amt>0)){ alert('請輸入這次確認的點數。'); return; }
+  if(amt%LED_UNIT&&!confirm(`${fmt(amt)} 點不是 ${fmt(LED_UNIT)} 的倍數，確定要這樣記嗎？`)) return;
+  if(amt>x.left&&!confirm(`${fmt(amt)} 點比尚未確認的 ${fmt(x.left)} 點還多，確定要這樣記嗎？`)) return;
+  state.led['L'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)]={pk,amt,at,note,t:Date.now()};
+  saveState(); renderAll(); showLed(pk);
+}
+function ledDel(pk,id){
+  const r=docCum(pk.slice(2)).recs.find(z=>z.id===id); if(!r) return;
+  if(!confirm(`刪除這筆確認紀錄（${r.at}　${fmt(r.amt)} 點）？`)) return;
+  if(id.indexOf('m:')===0){ const key=id.slice(2), pm=state.pay[key];   // 改版前逐月按的確認：照原本「取消」的做法
+    if(pm&&pm.paid){ pm.paid[pk]={del:1,t:Date.now()}; if(!Object.keys(paidOf(key)).length){ pm.cfg=null; pm.cfgT=Date.now(); } } }
+  else state.led[id]={del:1,t:Date.now()};
+  saveState(); renderAll(); showLed(pk);
+}
+
 function download(name,text,type){
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
@@ -1305,6 +1377,66 @@ async function cloudReq(method,body,id){
     throw new Error('雲端回應 HTTP '+r.status);
   }
 }
+// ---------- 急診醫師班表（唯讀）：只用來算上班時數 ----------
+// 班表在同一個資料庫的 erScheduleData（排班系統在寫，這裡只讀、絕不寫入）。時數算法照排班系統的 calcDocHours：
+// 主白 12、早班＝切割點−8、小夜＝26−切割點、大夜 12；那一格有自訂時間就用自訂的；另外加的班也算，但支援其他單位的不算。
+const SCHED_NODE='erScheduleData', LS_SCHED='erCommission_sched';
+let schedHrs=null, _schedBusy=false, _schedTry=0;   // {at, names:[班表上的醫師], m:{'115-10':{姓名:[[幾日,時數],…]}}}
+try{ if(!VIEW) schedHrs=JSON.parse(localStorage.getItem(LS_SCHED)||'null'); }catch(e){}
+async function schedGet(path,q){
+  for(let i=0;;i++){
+    const r=await fetch(`${FB_DB}/${SCHED_NODE}/${path}.json?auth=${encodeURIComponent(await idToken(i>0))}${q||''}`,{cache:'no-store'});
+    if(r.ok) return r.json();
+    if((r.status===401||r.status===403)&&i===0) continue;
+    throw new Error('班表讀取失敗（HTTP '+r.status+'）');
+  }
+}
+// 這一天每個人（班表上的代號）各上幾小時。cfg＝切割點設定（逐月的 monthSplit 以 '年-月(0 起算)' 為鍵），hol＝假日
+function schedDayHours(dateStr,ds,cfg,hol){
+  const out={}, [y,m,d]=dateStr.split('-').map(Number), cl=v=>Math.min(20,Math.max(16,v||20));
+  const mc=cfg.monthSplit&&cfg.monthSplit[`${y}-${m-1}`];
+  const sc=mc?{d:cl(mc.d||20),h:cl(mc.h||17),bal:!!mc.bal}:{d:cl(cfg.defaultSplit||20),h:cl(cfg.holidaySplit||17),bal:!!cfg.splitBalance};
+  const dow=new Date(y,m-1,d).getDay(), sp=ds.split||(sc.bal?18:((hol.has(dateStr)||dow===0||dow===6)?sc.h:sc.d));
+  const span=t=>{ const mm=String(t||'').match(/^(\d{1,2})-(\d{1,2})$/); if(!mm) return 0; let a=+mm[1], b=+mm[2]; if(b<=a) b+=24; return b-a; };
+  const slotH={'主白':12,'早班':sp-8,'小夜':26-sp,'大夜':12};
+  Object.keys(slotH).forEach(sl=>{ const id=ds[sl]; if(!id) return; const ct=ds.customTimes&&ds.customTimes[sl]; out[id]=(out[id]||0)+(ct?span(ct):slotH[sl]); });
+  Object.values(ds.extras||{}).forEach(ex=>{ if(ex&&ex.docId&&!/^(yangtian|icu|ward)$/.test(ex.kind||'')) out[ex.docId]=(out[ex.docId]||0)+span(ex.timeRange); });
+  return out;
+}
+async function loadSched(force){
+  if(_schedBusy||(VIEW&&!isDocView())) return;
+  const ks=Object.keys(state.data.months).sort(); if(!ks.length) return;
+  if(!force&&schedHrs&&Date.now()-schedHrs.at<10*60*1000&&ks.every(k=>schedHrs.m[k])) return;   // 十分鐘內讀過就不重讀
+  _schedBusy=true;
+  try{
+    const ad=k=>`${+k.split('-')[0]+1911}-${k.split('-')[1]}`;
+    const q=`&orderBy=%22%24key%22&startAt=%22${ad(ks[0])}-01%22&endAt=%22${ad(ks[ks.length-1])}-31%22`;   // 只拿有資料的那幾個月
+    await idToken();   // 先把登入拿好，下面幾個同時發的請求才不會各自去登入、互相把對方的憑證換掉
+    const [days,docs,hol,ms,dsp,hsp,bal]=await Promise.all([schedGet('schedule',q),schedGet('doctors'),schedGet('holidays'),
+      schedGet('monthSplit'),schedGet('defaultSplit'),schedGet('holidaySplit'),schedGet('splitBalance')]);
+    const byId={}; Object.values(docs||{}).forEach(d=>{ if(d&&d.id) byId[d.id]=normName(d.name); });
+    const cfg={monthSplit:ms||{},defaultSplit:dsp,holidaySplit:hsp,splitBalance:bal}, H=new Set(Object.values(hol||{})), m={};
+    ks.forEach(k=>{ m[k]={}; });
+    Object.keys(days||{}).forEach(ds=>{ const pp=ds.split('-'), k=`${+pp[0]-1911}-${pp[1]}`; if(!m[k]) return;
+      const o=schedDayHours(ds,days[ds]||{},cfg,H);
+      Object.keys(o).forEach(id=>{ const n=byId[id]; if(n&&o[id]) (m[k][n]||(m[k][n]=[])).push([+pp[2],o[id]]); }); });
+    let names=[...new Set(Object.values(byId))];
+    if(VIEW){ const me=viewInfo.name; names=names.filter(n=>n===me); Object.keys(m).forEach(k=>{ m[k]=m[k][me]?{[me]:m[k][me]}:{}; }); }   // 個人頁只留本人的
+    const old=schedHrs&&stable([schedHrs.names,schedHrs.m]);
+    schedHrs={at:Date.now(),names,m};
+    if(!VIEW){ try{ localStorage.setItem(LS_SCHED,JSON.stringify(schedHrs)); }catch(e){} }
+    _schedBusy=false; _schedTry=0;
+    if(old!==stable([names,m])) renderAll();
+  }catch(e){ _schedBusy=false; if(++_schedTry<=3) setTimeout(()=>loadSched(force),20000); }   // 沒讀到：隔一下再試，最多三次（之後跟著每次更新再試）
+}
+// 某位醫師某個月的上班時數：當月只算到今天（含今天的班）。班表上沒有這個人、或還沒讀到班表時回 null
+function docHours(name,key){
+  if(!schedHrs||!schedHrs.m[key]||!schedHrs.names.includes(name)) return null;
+  const lim=key===todayKey()?new Date().getDate():31;
+  return (schedHrs.m[key][name]||[]).reduce((t,x)=>t+(x[0]<=lim?x[1]:0),0);
+}
+const perHour=(sales,hh)=>hh?sales/hh:null;
+
 // 要同步的內容。點數一律寫出實際數字（含本機預設值），別台裝置才拿得到
 function buildPayload(){
   const c=state.cfg, rates={}, pay={};
@@ -1312,7 +1444,7 @@ function buildPayload(){
   Object.assign(rates,liveRates());
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm||(!Object.keys(pm.paid||{}).length&&!pm.cfgT)) return;
     pay[k]={paid:pm.paid||{},cfg:pm.cfg||null,cfgT:pm.cfgT||0}; });
-  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{}},pay};
+  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{}},pay,led:state.led||{}};
 }
 const rateSum=r=>r?FIELDS.reduce((t,f)=>t+(Number(r[f])||0),0):0;
 // 本機設定檔（sheet-config.js）的預設值新增了欄位（例如後來才加的科部）時，把還沒填過的欄位補成明確數字、
@@ -1356,6 +1488,8 @@ function mergeRemote(rm){
     if(rc.url!==window.COMMISSION_SHEET_URL) c.url=rc.url; else delete c.url;
     c.tU=Math.max(c.tU||0,rc.tU||0); ch=true;
   }
+  state.led=state.led||{};
+  Object.keys(rm.led||{}).forEach(id=>{ const a=rm.led[id], b=state.led[id]; if(a&&(!b||(a.t||0)>(b.t||0))){ state.led[id]=a; ch=true; } });   // 醫師累積點數的紀錄：逐筆看修改時間
   Object.keys(rm.pay||{}).forEach(k=>{
     const r=rm.pay[k]||{}, l=state.pay[k]||(state.pay[k]={paid:{}}); l.paid=l.paid||{};
     if((r.cfgT||0)>(l.cfgT||0)){ l.cfg=r.cfg||null; l.cfgT=r.cfgT; ch=true; }
@@ -1425,7 +1559,7 @@ const strongPw=pw=>pw.length>=10&&/[A-Za-z]/.test(pw)&&/\d/.test(pw);
 const PW_RULE='同步密碼至少要 10 個字，而且要同時有英文字母和數字。\n請不要用科內大家都知道的號碼。';
 // 這組密碼被更換作廢了：清掉這台裝置上的資料與金鑰（個人查看代碼不動）
 function wipeLocal(){
-  try{ [LS,LS_SYNC,LS_UI].forEach(k=>localStorage.removeItem(k)); localStorage.setItem(LS_NOTICE,'pw'); }catch(e){}
+  try{ [LS,LS_SYNC,LS_UI,LS_SCHED].forEach(k=>localStorage.removeItem(k)); localStorage.setItem(LS_NOTICE,'pw'); }catch(e){}
   location.reload();
 }
 async function changeSyncPw(pw){
@@ -1486,8 +1620,9 @@ async function forceUpdate(){
 
 // ---------- 個人查看連結 ----------
 // 主任端：替某位專師或醫師建立連結後，把「算他點數需要的最少資料」加密放到雲端的獨立節點——試算表網址、
-// 他那個身分的每件點數（專師＝主要／平分＋平分人數；醫師＝醫師那一欄）、他自己各月的確認註記。
-// 不含另一個身分的點數、科部、品項點數、原始點數，也不含別人的註記。
+// 他那個身分的每件點數（專師＝主要／平分＋平分人數；醫師＝醫師那一欄＋品項點數，用來算他自己的品項總點數）、
+// 他自己的確認紀錄（專師＝各月的確認註記；醫師＝累積點數的每一筆）。
+// 不含另一個身分的點數、科部、原始點數，也不含別人的紀錄；專師那邊也不含品項點數。
 // 本人端：用連結裡的金鑰解開，再自己即時讀試算表算出點數，所以主任沒開 App 時數字也會跟著試算表更新。
 // 連結在 cfg.views 裡的鍵：專師＝姓名，醫師＝'d|姓名'（viewWho 拆回身分與姓名）
 const _pubHash={}, pubSt={};
@@ -1495,7 +1630,7 @@ let _pubBusy=false,_pubAgain=false;
 // 連結帶 openExternalBrowser=1：在 LINE 裡點開時會直接交給手機的瀏覽器（LINE 內建瀏覽器不能加到主畫面）
 const viewUrl=tok=>(location.protocol==='file:'?PUBLIC_URL:location.origin+location.pathname.replace(/[^/]*$/,''))+'me.html?openExternalBrowser=1#me='+tok;
 const npRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={promo:Number(r.promo)||0,pool:Number(r.pool)||0}; }); return o; };
-const docRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ o[pid]={doc:Number((products[pid]||{}).doc)||0}; }); return o; };
+const docRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={doc:Number(r.doc)||0,price:Number(r.price)||0}; }); return o; };
 const viewWho=key=>/^d\|/.test(key)?{role:'d',name:key.slice(2)}:{role:'n',name:key};
 function viewBlob(key){
   const {role,name}=viewWho(key);
@@ -1507,7 +1642,8 @@ function viewBlob(key){
       if(pm.cfg) m.rates=docRates(pm.cfg.products);
       if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
       if(Object.keys(m).length) months[k]=m; });
-    return {v:1,role:'d',name,url:sheetUrl(),rates:docRates(live.products),sets,months};
+    const led=Object.keys(state.led||{}).map(id=>state.led[id]).filter(r=>r&&!r.del&&r.pk==='d|'+name).map(r=>({amt:Number(r.amt)||0,at:r.at||'',note:r.note||''}));
+    return {v:1,role:'d',name,url:sheetUrl(),rates:docRates(live.products),sets,months,led};
   }
   const live=cfgFor(''), months={}, sets={};
   Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=npRates(ratesFor(k)); });
@@ -1587,12 +1723,13 @@ function installHtml(){
 // 把解開的內容套成一般的設定格式，之後照常用 calcMonth 算。專師：平分名單只知道人數，用佔位名字補滿；醫師：沒有平分名單
 function applyView(b){
   const doc=b.role==='d';
-  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]=doc?{doc:Number(r[pid].doc)||0,promo:0,pool:0,fund:0,price:0,cost:0}
+  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]=doc?{doc:Number(r[pid].doc)||0,promo:0,pool:0,fund:0,price:Number(r[pid].price)||0,cost:0}
     :{doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0,cost:0}; }); return o; };
   const pool=(n,inPool)=>{ if(doc) return []; const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
   state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
   state.cfg.rateSets={}; Object.keys(b.sets||{}).forEach(k=>{ state.cfg.rateSets[k]={r:full(b.sets[k]),t:0}; });
-  state.pay={};
+  state.pay={}; state.led={};
+  (doc?b.led||[]:[]).forEach((r,i)=>{ state.led['v'+i]={pk:'d|'+b.name,amt:Number(r.amt)||0,at:r.at||'',note:r.note||'',t:1}; });
   Object.keys(b.months||{}).forEach(k=>{ const m=b.months[k], pm=state.pay[k]={paid:{}};
     if(m.rates) pm.cfg={products:full(m.rates),sharers:pool(m.n,m.inPool)};
     if(m.paid) pm.paid[(doc?'d|':'n|')+b.name]={amt:m.paid.amt,at:m.paid.at,t:1}; });
@@ -1631,8 +1768,9 @@ function renderMe(ks){
   const mine=k=>{ const c=calcMonth(k); return {c,p:people(c).find(x=>x.pk===pk)||{it:{},promo:0,share:0,amt:0,rec:paidOf(k)[pk]||null}}; };
   const all=ks.map(k=>Object.assign({k},mine(k)));
   const stOf={}; all.forEach(({k,p})=>{ stOf[k]=!p.amt&&!p.rec?'empty':p.rec&&p.rec.amt>=p.amt?'done':p.rec?'part':'none'; });
-  renderMonthBar(ks,k=>stOf[k]||'empty','<span><i class="done"></i>已確認</span><span><i class="none"></i>還沒確認</span>');
+  renderMonthBar(ks,k=>doc?'':(stOf[k]||'empty'),doc?'':'<span><i class="done"></i>已確認</span><span><i class="none"></i>還沒確認</span>');   // 醫師不逐月確認，月份上不標狀態
   const {c,p}=all.find(x=>x.k===cur), pids=monthPids(c).filter(pid=>p.it[pid]), rows=c.rows.filter(r=>(doc?r.doc:r.np)===name);
+  const hrs=doc?docHours(name,cur):null, rate=perHour(p.sales||0,hrs), cum=doc?docCum(name):null;
   // 點數說明：這個月適用的各品項每件點數（專師：主要＝負責那一件的人拿的、平分＝每件另外給全體平分名單均分的；醫師：就是醫師那一欄）
   const N=c.cfg.sharers.length, f=doc?'doc':'promo';
   const expl=[...new Set([...productList().map(x=>x.id),...Object.keys(c.cfg.products||{})])]
@@ -1652,7 +1790,11 @@ function renderMe(ks){
       <div class="tile big clk" data-act="trend" data-m="myunits" role="button"><span class="tg">📈</span><div class="v">${sumVals(p.it)}</div><div class="l">${doc?'我的件數':'我的主要件數'}</div>
         <div class="s">${vsPrevHtml('myunits',cur)}</div><div class="s">${itTxt}</div></div>
     </div>
-    ${doc?'':`<div class="tiles"><div class="tile" style="grid-column:1/-1"><div class="l">池子占比</div><div class="v">${pct==null?'—':pct.toFixed(1)+'%'}</div>
+    ${doc?`<div class="tiles">
+      <div class="tile clk" data-act="trend" data-m="mysales" role="button"><span class="tg">📈</span><div class="l">品項總點數</div><div class="v">${fmt(p.sales||0)}</div><div class="s">${vsPrevHtml('mysales',cur)}</div></div>
+      <div class="tile clk" data-act="trend" data-m="myrate" role="button"><span class="tg">📈</span><div class="l">每小時品項總點數</div><div class="v">${rate==null?'—':fmt(rate)}</div>
+        <div class="s">${hrs==null?'還沒讀到班表':`上班 ${hrs} 小時${cur===todayKey()?'（算到今天）':''}`}</div></div></div>`
+    :`<div class="tiles"><div class="tile" style="grid-column:1/-1"><div class="l">池子占比</div><div class="v">${pct==null?'—':pct.toFixed(1)+'%'}</div>
       <div class="s">我的點數 ÷ 全體專師的點數</div><div class="bar"><span style="width:${pct==null?0:Math.min(100,pct)}%"></span></div></div></div>`}
     ${mixCard('我的點數的組成',(doc?[]:[{label:'平分',note:'',v:p.share,c:'#9aa7b8'}]).concat(pids.map(pid=>({label:prodName(pid),note:(doc?'':'主要 ')+p.it[pid]+' 件',v:p.it[pid]*rateOf(c.cfg,pid)[f],c:prodColor(pid)}))))}
     <details class="card sec" data-sec="me-expl"${isOpen('me-expl')?' open':''}><summary><span>點數說明</span></summary>`+
@@ -1671,11 +1813,20 @@ function renderMe(ks){
       (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(doc?r.np:r.doc)}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
        `<tr><td class="l mut" colspan="5">${doc?'這個月還沒有你的紀錄':'這個月還沒有你為主要的紀錄'}</td></tr>`)+`</tbody></table></div></details>
     <details class="card sec" data-sec="me-all"${isOpen('me-all')?' open':''}><summary><span>各月合計</span><span class="sum-amt">${all.length} 個月</span></summary>
-      <div class="tw"><table><thead><tr><th class="l">月份</th><th>件數</th>${doc?'':'<th>主要</th><th>平分</th>'}<th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
-      all.map(({k,p})=>`<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td>${doc?'':`<td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td>`}<td class="amt">${fmt(p.amt)}</td>`+
-        `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`).join('')+`</tbody></table></div></details>
-    <div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
-      <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>
+      <div class="tw"><table><thead><tr><th class="l">月份</th><th>件數</th>${doc?'<th>點數</th><th>品項總點數</th><th>上班時數</th><th>每小時</th>':'<th>主要</th><th>平分</th><th>合計</th><th class="l">確認</th>'}</tr></thead><tbody>`+
+      all.map(({k,p})=>{ const hh=doc?docHours(name,k):null, rt=perHour(p.sales||0,hh);
+        return `<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td>`+(doc
+          ?`<td class="amt">${fmt(p.amt)}</td><td class="n">${fmt(p.sales||0)}</td><td class="n">${hh==null?'—':hh}</td><td class="n">${rt==null?'—':fmt(rt)}</td></tr>`
+          :`<td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`+
+           `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`); }).join('')+`</tbody></table></div>
+      ${doc?'<div class="sub2">上班時數讀自急診醫師班表（這個月算到今天），不含支援其他單位的班；每小時＝品項總點數 ÷ 上班時數。</div>':''}</details>
+    ${doc?`<div class="card"><h2>累積點數</h2>${cumTiles(cum)}
+      <div class="sub2">點數是累積的：以 ${fmt(LED_UNIT)} 點為一單位確認，不一定每個月；沒確認完的留到下次。數字跟著試算表每分鐘自動更新，實際以主任核對為準。</div>
+      <div class="tw" style="margin-top:8px"><table><thead><tr><th class="l">確認日期</th><th>點數</th><th class="l">備註</th></tr></thead><tbody>`+
+      (cum.recs.slice().reverse().map(r=>`<tr><td class="l">${esc(r.at)}</td><td class="n">${fmt(r.amt)}</td><td class="l" style="white-space:normal">${esc(r.note)}</td></tr>`).join('')||
+       '<tr><td class="l mut" colspan="3">還沒有確認紀錄</td></tr>')+`</tbody></table></div></div>`
+    :`<div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
+      <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>`}
     ${installHtml()}
     <div style="text-align:center;margin-top:8px"><button class="btn mini ghost" data-act="me-forget">在這台裝置移除這個連結</button></div>`;
 }
@@ -1697,6 +1848,9 @@ function act(a,t,ev){
     if(!confirm('在這台裝置移除這個連結？\n之後要再看，需要重新打開主任給的連結。')) return;
     try{ localStorage.removeItem(LS_ME); }catch(e){} location.href=location.pathname;
   }
+  else if(a==='led') showLed(k);
+  else if(a==='led-add') ledAdd(k);
+  else if(a==='led-del') ledDel(k,t.dataset.id);
   else if(a==='view-new') newView(t.dataset.n);
   else if(a==='view-del'){
     const n=t.dataset.n, v=state.cfg.views[n]; if(!v||v.del) return;
