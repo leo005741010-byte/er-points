@@ -248,7 +248,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.07b';
+const APP_VER='2026.10.07c';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -1630,7 +1630,8 @@ let _pubBusy=false,_pubAgain=false;
 // 連結帶 openExternalBrowser=1：在 LINE 裡點開時會直接交給手機的瀏覽器（LINE 內建瀏覽器不能加到主畫面）
 const viewUrl=tok=>(location.protocol==='file:'?PUBLIC_URL:location.origin+location.pathname.replace(/[^/]*$/,''))+'me.html?openExternalBrowser=1#me='+tok;
 const npRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={promo:Number(r.promo)||0,pool:Number(r.pool)||0}; }); return o; };
-const docRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={doc:Number(r.doc)||0,price:Number(r.price)||0}; }); return o; };
+// price 沒填（較早的月份快照沒有這一欄）要留 null，不能寫成 0：個人頁才會和主任頁一樣退回用現行的品項點數（見 rateOf）
+const docRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={doc:Number(r.doc)||0,price:r.price==null?null:Number(r.price)||0}; }); return o; };
 const viewWho=key=>/^d\|/.test(key)?{role:'d',name:key.slice(2)}:{role:'n',name:key};
 function viewBlob(key){
   const {role,name}=viewWho(key);
@@ -1723,7 +1724,7 @@ function installHtml(){
 // 把解開的內容套成一般的設定格式，之後照常用 calcMonth 算。專師：平分名單只知道人數，用佔位名字補滿；醫師：沒有平分名單
 function applyView(b){
   const doc=b.role==='d';
-  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]=doc?{doc:Number(r[pid].doc)||0,promo:0,pool:0,fund:0,price:Number(r[pid].price)||0,cost:0}
+  const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]=doc?{doc:Number(r[pid].doc)||0,promo:0,pool:0,fund:0,price:r[pid].price==null?null:Number(r[pid].price)||0,cost:0}
     :{doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0,cost:0}; }); return o; };
   const pool=(n,inPool)=>{ if(doc) return []; const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
   state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
@@ -1743,7 +1744,8 @@ async function loadView(){
     if(blob&&blob.data){ try{ b=await unseal(blob,VIEW.key); }catch(e){ b=null; } }
     if(!b){ viewInfo=null; viewErr='gone'; }
     else{ const first=!viewInfo, sig=stable(b);
-      if(first||viewInfo.sig!==sig){ applyView(b); viewInfo={name:b.name,role:b.role==='d'?'d':'n',inPool:!!b.inPool,sig}; }
+      if(first||viewInfo.sig!==sig){ applyView(b); viewInfo={name:b.name,role:b.role==='d'?'d':'n',inPool:!!b.inPool,sig,
+          noPrice:b.role==='d'&&!Object.values(b.rates||{}).some(r=>r&&r.price!=null)}; }   // noPrice＝主任那邊還是舊版放上來的內容，沒帶品項點數
       viewErr=null;
       if(first){ renderAll(); refresh(true); return; }
     }
@@ -1770,7 +1772,8 @@ function renderMe(ks){
   const stOf={}; all.forEach(({k,p})=>{ stOf[k]=!p.amt&&!p.rec?'empty':p.rec&&p.rec.amt>=p.amt?'done':p.rec?'part':'none'; });
   renderMonthBar(ks,k=>doc?'':(stOf[k]||'empty'),doc?'':'<span><i class="done"></i>已確認</span><span><i class="none"></i>還沒確認</span>');   // 醫師不逐月確認，月份上不標狀態
   const {c,p}=all.find(x=>x.k===cur), pids=monthPids(c).filter(pid=>p.it[pid]), rows=c.rows.filter(r=>(doc?r.doc:r.np)===name);
-  const hrs=doc?docHours(name,cur):null, rate=perHour(p.sales||0,hrs), cum=doc?docCum(name):null;
+  const hrs=doc?docHours(name,cur):null, rate=perHour(p.sales||0,hrs), cum=doc?docCum(name):null, noP=doc&&viewInfo.noPrice;
+  const hrTxt=hrs==null?'還沒讀到班表':`上班 ${hrs} 小時${cur===todayKey()?'（算到今天）':''}`;
   // 點數說明：這個月適用的各品項每件點數（專師：主要＝負責那一件的人拿的、平分＝每件另外給全體平分名單均分的；醫師：就是醫師那一欄）
   const N=c.cfg.sharers.length, f=doc?'doc':'promo';
   const expl=[...new Set([...productList().map(x=>x.id),...Object.keys(c.cfg.products||{})])]
@@ -1791,9 +1794,11 @@ function renderMe(ks){
         <div class="s">${vsPrevHtml('myunits',cur)}</div><div class="s">${itTxt}</div></div>
     </div>
     ${doc?`<div class="tiles">
-      <div class="tile clk" data-act="trend" data-m="mysales" role="button"><span class="tg">📈</span><div class="l">品項總點數</div><div class="v">${fmt(p.sales||0)}</div><div class="s">${vsPrevHtml('mysales',cur)}</div></div>
+      ${noP?`<div class="tile"><div class="l">品項總點數</div><div class="v">—</div><div class="s">等主任的 App 更新後就會顯示</div></div>
+      <div class="tile"><div class="l">每小時品項總點數</div><div class="v">—</div><div class="s">${hrTxt}</div></div>`
+      :`<div class="tile clk" data-act="trend" data-m="mysales" role="button"><span class="tg">📈</span><div class="l">品項總點數</div><div class="v">${fmt(p.sales||0)}</div><div class="s">${vsPrevHtml('mysales',cur)}</div></div>
       <div class="tile clk" data-act="trend" data-m="myrate" role="button"><span class="tg">📈</span><div class="l">每小時品項總點數</div><div class="v">${rate==null?'—':fmt(rate)}</div>
-        <div class="s">${hrs==null?'還沒讀到班表':`上班 ${hrs} 小時${cur===todayKey()?'（算到今天）':''}`}</div></div></div>`
+        <div class="s">${hrs?vsPrevHtml('myrate',cur):''}</div><div class="s">${hrTxt}</div></div>`}</div>`
     :`<div class="tiles"><div class="tile" style="grid-column:1/-1"><div class="l">池子占比</div><div class="v">${pct==null?'—':pct.toFixed(1)+'%'}</div>
       <div class="s">我的點數 ÷ 全體專師的點數</div><div class="bar"><span style="width:${pct==null?0:Math.min(100,pct)}%"></span></div></div></div>`}
     ${mixCard('我的點數的組成',(doc?[]:[{label:'平分',note:'',v:p.share,c:'#9aa7b8'}]).concat(pids.map(pid=>({label:prodName(pid),note:(doc?'':'主要 ')+p.it[pid]+' 件',v:p.it[pid]*rateOf(c.cfg,pid)[f],c:prodColor(pid)}))))}
@@ -1816,7 +1821,7 @@ function renderMe(ks){
       <div class="tw"><table><thead><tr><th class="l">月份</th><th>件數</th>${doc?'<th>點數</th><th>品項總點數</th><th>上班時數</th><th>每小時</th>':'<th>主要</th><th>平分</th><th>合計</th><th class="l">確認</th>'}</tr></thead><tbody>`+
       all.map(({k,p})=>{ const hh=doc?docHours(name,k):null, rt=perHour(p.sales||0,hh);
         return `<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td>`+(doc
-          ?`<td class="amt">${fmt(p.amt)}</td><td class="n">${fmt(p.sales||0)}</td><td class="n">${hh==null?'—':hh}</td><td class="n">${rt==null?'—':fmt(rt)}</td></tr>`
+          ?`<td class="amt">${fmt(p.amt)}</td><td class="n">${noP?'—':fmt(p.sales||0)}</td><td class="n">${hh==null?'—':hh}</td><td class="n">${noP||rt==null?'—':fmt(rt)}</td></tr>`
           :`<td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`+
            `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`); }).join('')+`</tbody></table></div>
       ${doc?'<div class="sub2">上班時數讀自急診醫師班表（這個月算到今天），不含支援其他單位的班；每小時＝品項總點數 ÷ 上班時數。</div>':''}</details>
@@ -1993,9 +1998,31 @@ window.addEventListener('storage',e=>{
   if(e.key===LS){ state=loadState(); renderAll(); }
   if(e.key===LS_SYNC){ try{ sync=JSON.parse(e.newValue||'null'); }catch(_){ sync=null; } setSync(sync?'idle':'off'); if(sync) syncNow(); }
 });
+// 網站上有新版就自動換上。手機上的 App 常常只是從背景叫回來、不會重新載入，會一直跑舊程式
+// （主任那邊跑舊程式時，放到雲端給個人頁的內容也是舊格式）。回到畫面時、以及開著時每 10 分鐘，
+// 比對網站上的版本號；不同、而且沒有正在輸入或開著視窗時，重新載入一次。
+const SS_VER='erCommission_verTried';
+let _verAt=0;
+async function checkVersion(){
+  if(location.protocol==='file:'||navigator.onLine===false||Date.now()-_verAt<3*60*1000) return;
+  _verAt=Date.now();
+  try{
+    const r=await fetch('index.html',{cache:'no-store'}); if(!r.ok) return;
+    const m=(await r.text()).match(/const APP_VER='([^']+)'/);
+    if(!m||m[1]===APP_VER) return;
+    let tried=''; try{ tried=sessionStorage.getItem(SS_VER)||''; }catch(e){}
+    if(tried.split('|')[0]===m[1]&&Date.now()-Number(tried.split('|')[1])<5*60*1000) return;   // 剛為這一版重載過、拿到的還是舊的（網站快取還沒換完）：先不要一直重載
+    const ae=document.activeElement;
+    if((ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))||draftDirty()||$('mask').classList.contains('on')){ _verAt=0; return; }   // 正在操作：下次再換
+    try{ sessionStorage.setItem(SS_VER,m[1]+'|'+Date.now()); }catch(e){}
+    location.reload();
+  }catch(e){}
+}
+setInterval(()=>{ if(document.visibilityState==='visible') checkVersion(); },10*60*1000);
 // 回到視窗超過 1 分鐘沒讀過就補讀；開著時每 5 分鐘讀一次
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState!=='visible') return;
+  checkVersion();
   if(VIEW) loadView();
   if(Date.now()-(Date.parse(state.data.checked||0)||0)>60000) refresh(true);
   if(sync) syncNow();
