@@ -111,6 +111,7 @@ details.card[open]>summary{margin-bottom:12px}
 .mixbar{display:flex;height:30px;border-radius:8px;overflow:hidden;margin:8px 0 8px;background:#e8edf3}
 .mixbar span{display:flex;align-items:center;justify-content:center;color:#fff;font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;min-width:3px}
 .mixbar span+span{border-left:2px solid #fff}
+.mixh{font-weight:700;color:var(--navy-dark);font-size:14px;margin:6px 0 0}
 .pr{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line);font-size:14px}
 .pr i{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
 .pr .pl{flex:1;min-width:0}.pr .pl small{color:var(--mut);margin-left:6px;font-size:12px}
@@ -248,7 +249,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.07c';
+const APP_VER='2026.10.09a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -888,7 +889,10 @@ function renderMonth(){
   const hSum=dList.reduce((t,x)=>t+(x.h||0),0), phTxt=(sl,hh)=>{ const v=perHour(sl,hh); return v==null?'—':fmt(v); };
   const drow=({p,h:hh})=>`<tr class="${!p.payable?'bad':''}"><td class="l nmc">${p.idle?`<b>${esc(p.name)}</b>`:nameBtn(p)}</td>${pids.map(pid=>qtd(p.it[pid],pid)).join('')}<td class="amt">${fmt(p.amt)}</td>`+
     `<td class="n sub" data-l="品項總點數">${fmt(p.sales)}</td><td class="n sub" data-l="上班">${hh==null?'—':hh+'<span class="hru"> 小時</span>'}</td><td class="n sub" data-l="每小時">${phTxt(p.sales,hh)}</td></tr>`;
+  const docMix=mixHtml(docs.filter(p=>p.amt>0).map(p=>({label:p.name||'（未填醫師）',note:sumVals(p.it)+' 件',v:p.amt,c:personColor('d',p.name)})));
+  const npMix=mixHtml(nps.filter(p=>p.amt>0).map(p=>({label:p.name||'（未填專師）',note:'主要 '+sumVals(p.it)+' 件',v:p.amt,c:personColor('n',p.name)})));
   h+=sec('d','醫師點數',dTot,'',`<div class="sec-head"><div class="hint">點姓名可看逐筆明細。上班時數讀自急診醫師班表${cur===todayKey()?'（這個月算到今天）':''}，不含支援其他單位的班；每小時＝品項總點數 ÷ 上班時數。${schedHrs&&schedHrs.m[cur]?'':'<b>目前還沒讀到班表。</b>'}</div></div>
+    ${docMix?`<div class="mixh">各醫師的占比</div>${docMix}<div class="mixh" style="margin-top:12px">明細</div>`:''}
     <div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th>品項總點數</th><th>上班時數</th><th>每小時品項總點數</th></tr></thead><tbody>`+
     (dList.length?dList.map(drow).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
     `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="amt">${fmt(dTot)}</td><td class="n sub" data-l="品項總點數">${fmt(c.sales)}</td><td class="n sub" data-l="上班">${hSum?hSum+'<span class="hru"> 小時</span>':'—'}</td><td class="n sub" data-l="每小時">${phTxt(c.sales,hSum)}</td></tr></tbody></table></div>`);
@@ -904,6 +908,7 @@ function renderMonth(){
     `</tbody></table></div></details>`;
   // 專師
   h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`<div class="sec-head"><div class="hint">件數＝本人為主要的件數。平分：本月平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點（主要的人自己也分得到）。</div>${allBtn('n','專師')}</div>
+    ${npMix?`<div class="mixh">各專師的占比</div>${npMix}<div class="mixh" style="margin-top:12px">明細</div>`:''}
     <div class="tw"><table class="ppl"><thead><tr><th class="l">專師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>主要點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
     (nps.length?nps.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="n sub" data-l="主要">${fmt(p.promo)}</td><td class="n sub" data-l="＋平分">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
     `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="n sub" data-l="主要">${fmt(promoTot)}</td><td class="n sub" data-l="＋平分">${fmt(nTot-promoTot)}</td><td class="amt">${fmt(nTot)}</td><td class="st"></td></tr></tbody></table></div>
@@ -1050,14 +1055,22 @@ function refreshCfgRow(pid){
 const PROD_COLOR={dressing:'#1a4a7a',scar:'#5b9bd5',glue:'#ed7d31',repair:'#2e9e6b'}, XCOLOR=['#8e6bb5','#c9a34a','#4fb3bf','#d16a8a'];
 function prodColor(pid){ if(PROD_COLOR[pid]) return PROD_COLOR[pid]; const i=productList().map(p=>p.id).filter(x=>!PROD_COLOR[x]).indexOf(pid); return XCOLOR[(i<0?0:i)%XCOLOR.length]; }
 // 一條橫的長方形，各部分照占比分色；下面逐項列出點數與百分比。parts=[{label,note,v,c}]，由大到小排；0 的不畫、列在最後
-function mixCard(title,parts){
+function mixHtml(parts){
   const list=parts.slice().sort((x,y)=>y.v-x.v), tot=list.reduce((t,x)=>t+Math.max(0,x.v),0);
   if(!tot) return '';
   const pc=x=>x.v/tot*100;
-  return `<div class="card"><h2>${title}</h2>
-    <div class="mixbar" role="img">${list.filter(x=>x.v>0).map(x=>`<span style="flex:${x.v} 0 0;background:${x.c}" title="${esc(x.label)} ${pc(x).toFixed(1)}%">${pc(x)>=9?Math.round(pc(x))+'%':''}</span>`).join('')}</div>
+  return `<div class="mixbar" role="img">${list.filter(x=>x.v>0).map(x=>`<span style="flex:${x.v} 0 0;background:${x.c}" title="${esc(x.label)} ${pc(x).toFixed(1)}%">${pc(x)>=9?Math.round(pc(x))+'%':''}</span>`).join('')}</div>
     <div>${list.map(x=>`<div class="pr${x.v>0?'':' z'}"><i style="background:${x.c}"></i><span class="pl">${esc(x.label)}${x.note?`<small>${esc(x.note)}</small>`:''}</span><span class="pv">${fmt(x.v)} 點</span><b class="pp">${pc(x).toFixed(1)}%</b></div>`).join('')}
-      <div class="pr tot"><i></i><span class="pl">合計</span><span class="pv">${fmt(tot)} 點</span><b class="pp">100%</b></div></div></div>`;
+      <div class="pr tot"><i></i><span class="pl">合計</span><span class="pv">${fmt(tot)} 點</span><b class="pp">100%</b></div></div>`;
+}
+function mixCard(title,parts){ const h=mixHtml(parts); return h?`<div class="card"><h2>${title}</h2>${h}</div>`:''; }
+// 人的顏色：同一個人在各張占比圖用同一個顏色（照試算表名單的順序配；不在名單上的用姓名算一個固定的）
+const PCOLOR=['#1a4a7a','#ed7d31','#2e9e6b','#5b9bd5','#8e6bb5','#c9a34a','#4fb3bf','#d16a8a','#6b8e23','#b5651d','#708090','#e2574c'];
+function personColor(role,name){
+  if(!name) return '#b8c2cc';
+  const list=(role==='d'?state.data.roster.doc:state.data.roster.np)||[]; let i=list.indexOf(name);
+  if(i<0) i=list.length+[...name].reduce((t,ch)=>t+ch.charCodeAt(0),0);
+  return PCOLOR[i%PCOLOR.length];
 }
 
 // ---------- 逐月趨勢（點大數字磚跳出折線圖）----------
@@ -1169,8 +1182,11 @@ function showTrend(m){
   const pts=trendPts(m), anyH=pts.some(p=>p.h);
   const itTxt=k=>{ const it=histOf(k).it||{}; return Object.keys(it).filter(pid=>it[pid]).map(pid=>`${esc(prodName(pid))} ${it[pid]}`).join('・'); };
   const cumH=cumHtml(m);
+  // 主任頁點「品項總點數」：最上面先看這個月各醫師各占多少
+  const who=m==='sales'&&!VIEW&&cur&&state.data.months[cur]?people(calcMonth(cur)).filter(p=>p.role==='d'&&p.sales>0):[];
+  const whoH=who.length?`<div class="cumh">${keyLabel(cur)}・各醫師的占比</div>`+mixHtml(who.map(p=>({label:p.name||'（未填醫師）',note:sumVals(p.it)+' 件',v:p.sales,c:personColor('d',p.name)}))):'';
   $('dlg').innerHTML=`<h2>${T.title}${cumH?'':'・逐月趨勢'}<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    ${cumH}${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
+    ${whoH}${cumH}${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
     <div class="tw"><table><thead><tr><th class="l">月份</th><th>${T.title}</th><th>較上月</th></tr></thead><tbody>`+
     pts.map((p,i)=>{ const pv=i>0&&pts[i-1].k===shiftKey(p.k,-1)?pts[i-1].v:null, d=pv==null?null:pctVs(p.v,pv);
       return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${p.e&&m!=='diff'?`<div class="estit">推估件數：${itTxt(p.k)}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}</td><td class="n">${d==null?'—':pctHtml(d)}</td></tr>`; }).join('')+
