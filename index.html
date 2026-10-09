@@ -249,7 +249,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.09a';
+const APP_VER='2026.10.09b';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -858,9 +858,9 @@ function renderMonth(){
   }
   h+=`<div class="tiles sales">
     <div class="tile big clk" data-act="trend" data-m="sales" role="button"><span class="tg">📈</span><div class="v">${fmt(c.sales)}</div><div class="l">品項總點數</div>
-      <div class="s">${vsPrevHtml('sales',cur)}</div></div>
+      <div class="s">${vsPrevHtml('sales',cur)}</div>${projHtml('sales',cur)?`<div class="s">${projHtml('sales',cur)}</div>`:''}</div>
     <div class="tile big clk" data-act="trend" data-m="units" role="button"><span class="tg">📈</span><div class="v">${c.units}</div><div class="l">總件數</div>
-      <div class="s">${vsPrevHtml('units',cur)}</div>
+      <div class="s">${vsPrevHtml('units',cur)}</div>${projHtml('units',cur)?`<div class="s">${projHtml('units',cur)}</div>`:''}
       <div class="s">${c.rows.length} 筆${pids.length?'　'+pids.map(pid=>`${esc(prodName(pid))} ${c.prod[pid]}`).join('・'):''}</div></div>
   </div>`;
   // 組成橫條：這個月的品項總點數，各品項各佔多少
@@ -1101,8 +1101,11 @@ function trendPts(m){
   if(T.hist&&!VIEW) Object.keys(state.cfg.hist||{}).forEach(k=>{ if(histOf(k)) ks.push(k); });
   return ks.sort().map(k=>state.data.months[k]?{k,v:T.get(k)}:{k,v:T.hist(k),h:1,e:T.est?1:0});
 }
-// 數字磚上的「較上月」：上個月（月曆上的前一個月）有資料才比
+// 數字磚上的「較上月」：上個月（月曆上的前一個月）有資料才比。
+// 這個月還沒過完時，拿整個上個月來比一定是少的，所以改比「上月同期」（上個月 1 日到同一天），見 prevSamePeriod
 function vsPrevHtml(m,key){
+  const sp=prevSamePeriod(m,key);
+  if(sp){ const d=sp.pv==null?null:pctVs(TREND[m].get(key),sp.pv); return d==null?'沒有上個月同期的資料可比':'較上月同期'+(sp.est?'（推估）':'')+' '+pctHtml(d); }
   const pk=shiftKey(key,-1), T=TREND[m], h=!state.data.months[pk]&&T.hist&&!VIEW&&histOf(pk), pv=state.data.months[pk]?T.get(pk):(h?T.hist(pk):null);
   const d=pv==null?null:pctVs(T.get(key),pv);
   return d==null?'沒有上個月的資料可比':'較上月'+(h&&T.est?'（推估）':'')+' '+pctHtml(d);
@@ -1163,6 +1166,35 @@ const CUM={
     for(let d=1,a=0,b=0;d<=ds.D;d++){ a+=ds.sum[d]; b+=pool[d]; cum2[d]=a; cum[d]=a+(inPool&&N?Math.floor(b/N):0); }
     return {ds,cum,cum2,legend:['我的點數（主要＋平分）','只算主要（不含平分）']}; },
 };
+// 各指標「某個月 1 日到第 d 天」的累計（給「較上月同期」用）。沒列在這裡的指標（例如每小時）本來就是比率，照舊比整個月
+function mtdSum(key,d,val){ const live=ratesFor(key), ds=dailySums(key,(r,c)=>val(r,c,live)); let t=0; for(let i=1;i<=Math.min(d,ds.D);i++) t+=ds.sum[i]; return t; }
+const MTD={
+  sales:(k,d)=>mtdSum(k,d,(r,c,live)=>rowVal(r,c,live,'price')),
+  units:(k,d)=>mtdSum(k,d,r=>sumVals(r.it)),
+  cost: (k,d)=>mtdSum(k,d,(r,c,live)=>rowVal(r,c,live,'cost')),
+  myamt:(k,d)=>{ const x=CUM.myamt(k); return x.cum[Math.min(d,x.ds.D)]; },
+  myunits:(k,d)=>{ const n=viewInfo?viewInfo.name:'', f=isDocView()?'doc':'np'; return mtdSum(k,d,r=>r[f]===n?sumVals(r.it):0); },
+  mysales:(k,d)=>{ const n=viewInfo?viewInfo.name:''; return mtdSum(k,d,(r,c,live)=>r.doc===n?rowVal(r,c,live,'price'):0); },
+};
+// 這個月還沒過完時的比較基準＝上個月同期。回傳 {pv,est}；不是當月、或這個指標不能逐日累計時回 null（照舊比整個上個月）
+function prevSamePeriod(m,key){
+  if(key!==todayKey()||!MTD[m]) return null;
+  const pk=shiftKey(key,-1), T=TREND[m], D=new Date().getDate();
+  if(state.data.months[pk]) return {pv:MTD[m](pk,D),est:0};
+  if(T.hist&&!VIEW&&histOf(pk)){ const [py,pm]=pk.split('-').map(Number), pdim=new Date(py+1911,pm,0).getDate();
+    return {pv:T.hist(pk)*Math.min(D,pdim)/pdim,est:1}; }   // 上個月只有整月的數字：按天數比例折算
+  return {pv:null,est:0};
+}
+// 預估全月＝目前累計 ÷ 已過天數 × 這個月的天數，再和整個上個月比。只在這個月還沒過完、而且已經過了 3 天以上時才給（太早估不準）
+function projHtml(m,key){
+  if(key!==todayKey()) return '';
+  const [y,mo]=key.split('-').map(Number), dim=new Date(y+1911,mo,0).getDate(), D=new Date().getDate();
+  if(D>=dim||D<3) return '';
+  const T=TREND[m], proj=T.get(key)*dim/D, pk=shiftKey(key,-1);
+  const pv=state.data.months[pk]?T.get(pk):(T.hist&&!VIEW&&histOf(pk)?T.hist(pk):null), d=pv==null?null:pctVs(proj,pv);
+  const shown=proj>=10000?Math.round(proj/1000)*1000:Math.round(proj);   // 估出來的數字不寫到個位數，免得看起來很準
+  return `預估全月約 ${fmt(shown)}${d==null?'':'<br>較上月 '+pctHtml(d)}`;
+}
 function cumHtml(m){
   if(!CUM[m]||!cur||!state.data.months[cur]) return '';
   const {ds,cum,cum2,legend,daily}=CUM[m](cur), pts=[]; for(let d=1;d<=ds.D;d++) pts.push(cum2?{k:d,v:cum[d],v2:cum2[d]}:{k:d,v:cum[d]});
@@ -1188,10 +1220,10 @@ function showTrend(m){
   $('dlg').innerHTML=`<h2>${T.title}${cumH?'':'・逐月趨勢'}<button class="btn mini ghost" data-act="close">關閉</button></h2>
     ${whoH}${cumH}${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
     <div class="tw"><table><thead><tr><th class="l">月份</th><th>${T.title}</th><th>較上月</th></tr></thead><tbody>`+
-    pts.map((p,i)=>{ const pv=i>0&&pts[i-1].k===shiftKey(p.k,-1)?pts[i-1].v:null, d=pv==null?null:pctVs(p.v,pv);
-      return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${p.e&&m!=='diff'?`<div class="estit">推估件數：${itTxt(p.k)}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}</td><td class="n">${d==null?'—':pctHtml(d)}</td></tr>`; }).join('')+
+    pts.map((p,i)=>{ const sp=prevSamePeriod(m,p.k), pv=sp?sp.pv:(i>0&&pts[i-1].k===shiftKey(p.k,-1)?pts[i-1].v:null), d=pv==null?null:pctVs(p.v,pv);
+      return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${p.e&&m!=='diff'?`<div class="estit">推估件數：${itTxt(p.k)}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}</td><td class="n">${d==null?'—':pctHtml(d)+(sp?'<span class="est">同期</span>':'')}</td></tr>`; }).join('')+
     `</tbody></table></div>
-    <div class="sub2">每個月一個點；橘色是目前正在看的月份。這個月還沒過完時，數字會比完整的月份低。</div>`+
+    <div class="sub2">每個月一個點；橘色是目前正在看的月份。${MTD[m]?'這個月還沒過完，所以它的「較上月」比的是上個月同期（1 日到同一天），標「同期」。':'這個月還沒過完時，數字會比完整的月份低。'}</div>`+
     (anyH?`<div class="sub2">${T.est?'標「推估」的月份沒有逐筆紀錄：是拿當時報表上的原始總點數，用各品項的原始點數反推件數，再換算出來的，只能當參考（圖上是空心點、虛線）。':'標「報表」的月份是試算表開始記錄以前的，用的是當時報表上的數字。'}</div>`:
      T.hist&&!VIEW?'<div class="sub2">試算表開始記錄以前的月份還沒帶進這台裝置：在電腦上開一次本機版，確認頁尾顯示「☁ 已同步」，這裡就會出現。</div>':'');
   $('mask').classList.add('on');
