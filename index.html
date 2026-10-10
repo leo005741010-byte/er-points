@@ -131,6 +131,8 @@ details.sec>summary .tag{margin-left:auto}
 .note{border-radius:9px;padding:9px 13px;font-size:13.5px;margin-bottom:10px}
 .note.warn{background:var(--warnbg);color:var(--warn);border:1px solid #f3d9a4}
 .note.bad{background:var(--badbg);color:var(--bad);border:1px solid #f1b9b3}
+.note.big{background:#fff8e1;color:#5a4300;border:1px solid #f2c94c}
+.note.big .bigt{font-weight:700;margin-bottom:2px}.note.big .bigl{padding:2px 0;font-size:15px}.note.big .bigl small{margin-left:8px;color:var(--mut);font-size:12px}
 .note.info{background:#eaf2fb;color:var(--navy-dark);border:1px solid #c9dcf0}
 .note ul{margin:0;padding-left:20px}
 .tw{overflow-x:auto}
@@ -249,7 +251,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.09b';
+const APP_VER='2026.10.10a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -325,6 +327,7 @@ function normState(s){
   s.cfg.rateSets=s.cfg.rateSets||{};   // 各月自己的每件點數 {'115-10':{r:{品項:{…}},t}｜{del:1,t}}，見 ratesFor()
   s.cfg.hist=s.cfg.hist||{};   // 試算表開始記錄以前的月份 {'115-01':{cost,it:{品項:件數},t}｜{del:1,t}}，只給折線圖用，見 histOf()
   if(!Array.isArray(s.cfg.sharers)) s.cfg.sharers=null;   // null＝跟著試算表統計頁的專師名單
+  s.cfg.big=s.cfg.big||{on:true,min:5000,t:0};   // 單筆通知：on＝要不要發、min＝單筆品項點數的門檻（主任端設定，會同步、也會帶進個人連結）
   s.led=s.led||{};   // 醫師累積點數的確認紀錄 {id:{pk:'d|姓名',amt,at,note,t}｜{del:1,t}}，見 docCumAll()
   s.data=s.data||{}; s.data.months=s.data.months||{}; s.data.extra=s.data.extra||{};
   s.data.roster=s.data.roster||{}; s.data.roster.np=s.data.roster.np||[]; s.data.roster.doc=s.data.roster.doc||[];
@@ -346,6 +349,7 @@ function saveState(local){
   return true;
 }
 let state=VIEW?normState({}):loadState();
+if(VIEW) state.cfg.big={on:false,min:0,p:{}};   // 個人頁：等解開主任放的內容才知道要不要通知
 let cur=null;        // 目前檢視的月份 key（民國年-月，例 115-09）
 let yearSel=null;
 let busy=false, fail=null, delta=null;
@@ -737,7 +741,8 @@ function renderStatus(){
 function renderAll(){
   const ks=allKeys();
   // 個人查看：沒自己點過月份就一直跟著最新的月份（要看的是這個月正在累積的點數）
-  if(VIEW){ if(!_mePicked||!cur||!ks.includes(cur)) cur=ks.length?ks[ks.length-1]:null; renderStatus(); renderMe(ks); return; }
+  bigCheck();
+  if(VIEW){ if(!_mePicked||!cur||!ks.includes(cur)) cur=ks.length?ks[ks.length-1]:null; renderAlerts(); renderStatus(); renderMe(ks); return; }
   if(!cur||!ks.includes(cur)) cur=defaultKey();
   // 還沒有任何月份資料（新裝置）時先不顯示點數表與年度總覽，免得一堆 0 讓人誤會
   $('card-rates').style.display=$('card-year').style.display=cur?'':'none';
@@ -1012,6 +1017,7 @@ function renderCfg(){
   if(el.contains(document.activeElement)&&document.activeElement.tagName==='INPUT') return;   // 正在打字就不重畫
   el.innerHTML=`<h3 id="sync-h">雲端同步（手機、電腦共用同一份設定與確認註記）</h3>${syncHtml()}
     <h3>個人查看連結（專師只看得到自己的點數）</h3>${viewsHtml()}
+    <h3>單筆通知</h3>${bigCfgHtml()}
     <h3>試算表</h3>
     <div class="row"><input type="url" id="cfg-url" style="flex:1;min-width:260px" placeholder="https://docs.google.com/spreadsheets/d/…" value="${esc(sheetUrl())}"><button class="btn mini outline" data-act="url-save">儲存並更新</button></div>
     <div class="hint" style="margin-top:6px">只讀取 序／日期／各品項數量／專師／醫師 欄，其他欄位不會下載。試算表若改成不公開，可改用
@@ -1306,6 +1312,83 @@ function doPayAll(role){
   saveState(); renderAll();
 }
 
+// ---------- 單筆通知 ----------
+// 試算表的一筆（一列）品項點數達到門檻時，祝賀那一筆的主要專師：「賀 姓名，水性×1、除疤×1」。
+// 背後沒有伺服器在發送：是每台裝置在 App 開著（或再打開）、讀到試算表時自己發現新的紀錄——
+// 畫面最上面出現一條祝賀；這台裝置允許跳出通知的話，當天的新紀錄另外跳一則系統通知。App 完全關掉時不會響。
+// 要不要發與門檻（cfg.big）由主任端設定、會同步，也帶進每個人的個人連結；各裝置可以自己關掉（LS_BIG 的 off）。
+const LS_BIG='erCommission_big';
+let bigNew=[];   // 這台裝置還沒按「知道了」的
+function bigState(){ let o=null; try{ o=JSON.parse(localStorage.getItem(LS_BIG)||'null'); }catch(e){} o=o||{}; o.seen=o.seen||{}; o.pushed=o.pushed||{}; return o; }
+function bigSave(o){ try{ localStorage.setItem(LS_BIG,JSON.stringify(o)); }catch(e){} }
+// 一筆的品項點數。個人頁沒有完整的每件點數，用主任放進來的品項點數（cfg.big.p）算
+function bigVal(r,key){
+  if(VIEW){ const pr=(state.cfg.big||{}).p||{}; return Object.keys(r.it).reduce((t,pid)=>t+r.it[pid]*(Number(pr[pid])||0),0); }
+  const cfg=monthCfg(key), live=ratesFor(key); return Object.keys(r.it).reduce((t,pid)=>t+r.it[pid]*rateOf(cfg,pid,live).price,0);
+}
+// 這個月與上個月裡達到門檻的紀錄（id＝月份|序，同一筆之後再改內容不會重複通知）
+function bigItems(){
+  const b=state.cfg.big||{}, out=[], tk=todayKey(); if(!b.on||!(b.min>0)) return out;
+  [shiftKey(tk,-1),tk].forEach(k=>{ const md=state.data.months[k]; if(!md) return;
+    md.rows.forEach((r,i)=>{ const v=bigVal(r,k); if(v>=b.min) out.push({id:k+'|'+(r.n!==''&&r.n!=null?r.n:'i'+i),k,r,v}); }); });
+  return out;
+}
+const bigText=x=>`賀 ${x.r.np||x.r.doc||'（未填姓名）'}，${Object.keys(x.r.it).map(pid=>`${prodName(pid)}×${x.r.it[pid]}`).join('、')}`;
+function bigNotify(x){
+  try{
+    if(!('Notification' in window)||Notification.permission!=='granted') return;
+    const opt={body:bigText(x),tag:'big-'+x.id,icon:'icon-192.png',badge:'icon-192.png'}, sw=navigator.serviceWorker;
+    if(sw&&sw.getRegistration) sw.getRegistration().then(reg=>{ if(reg&&reg.showNotification) reg.showNotification('急診點數',opt); else new Notification('急診點數',opt); }).catch(()=>{});
+    else new Notification('急診點數',opt);
+  }catch(e){}
+}
+function bigCheck(){
+  const b=state.cfg.big||{}; bigNew=[];
+  if(!b.on||!(b.min>0)||!Object.keys(state.data.months).length) return;
+  const items=bigItems(), st=bigState(), d=new Date(), md=`${d.getMonth()+1}/${d.getDate()}`; let ch=false;
+  // 這台裝置第一次用、門檻剛改過、或自己關掉通知：現有的都當作看過，不補發（免得一次跳出一大串）
+  if(!st.init||st.min!==b.min||st.off){
+    items.forEach(x=>{ if(!st.seen[x.id]||!st.pushed[x.id]){ st.seen[x.id]=1; st.pushed[x.id]=1; ch=true; } });
+    if(!st.init||st.min!==b.min){ st.init=1; st.min=b.min; ch=true; }
+    if(ch) bigSave(st); return;
+  }
+  items.forEach(x=>{ if(st.seen[x.id]) return; bigNew.push(x);
+    if(!st.pushed[x.id]){ st.pushed[x.id]=1; ch=true; if(x.r.d===md) bigNotify(x); } });   // 跳通知只給今天的；較早的只在畫面上列出來
+  const keep=new Set(items.map(x=>x.id)), old=shiftKey(todayKey(),-1);   // 只留這個月和上個月的紀錄
+  ['seen','pushed'].forEach(f=>Object.keys(st[f]).forEach(id=>{ if(!keep.has(id)&&id.split('|')[0]<old){ delete st[f][id]; ch=true; } }));
+  if(ch) bigSave(st);
+}
+function bigAck(){ const st=bigState(); bigNew.forEach(x=>{ st.seen[x.id]=1; }); bigSave(st); bigNew=[]; renderAll(); }
+// 這台裝置能不能跳出系統通知
+function bigPermHtml(){
+  if(!('Notification' in window)) return '<span class="mut" style="font-size:12.5px">這台裝置的瀏覽器不能跳出通知（iPhone 要先「加入主畫面」、從主畫面的圖示打開才行），祝賀仍會出現在畫面最上面。</span>';
+  const pm=Notification.permission;
+  return pm==='granted'?'<span class="tag ok">✓ 這台裝置已允許跳出通知</span>'
+    :pm==='denied'?'<span class="tag no">這台裝置封鎖了通知</span> <span class="mut" style="font-size:12.5px">要到手機或瀏覽器的設定裡，把這個網站的通知打開。</span>'
+    :'<button class="btn mini" data-act="big-perm">允許這台裝置跳出通知</button>';
+}
+// 主任頁「其他設定」裡的那一段
+function bigCfgHtml(){
+  const b=state.cfg.big||{};
+  return `<div class="row"><label style="cursor:pointer"><input type="checkbox" data-act="big-on"${b.on?' checked':''}> 發通知</label>
+      <span>單筆品項點數達</span><input type="number" id="big-min" inputmode="numeric" min="0" step="500" value="${Number(b.min)||0}" style="width:100px"><span>點以上</span>
+      <button class="btn mini outline" data-act="big-save">儲存</button></div>
+    <div class="row" style="margin-top:6px">${bigPermHtml()}</div>
+    <div class="hint" style="margin-top:6px">試算表有一筆（一列）的品項點數達到這個數字時，所有人的 App 最上面會出現「賀 主要專師，品項×數量」；允許跳出通知的裝置，當天的新紀錄還會另外跳一則通知。
+      <b>要 App 開著（或再打開）時才收得到，App 完全關掉時手機不會響。</b>專師、醫師可以在自己的頁面關掉。</div>`;
+}
+// 專師、醫師個人頁最下面的那張卡
+function bigMeHtml(){
+  const b=state.cfg.big||{}; if(!b.on||!(b.min>0)) return '';
+  const st=bigState();
+  return `<div class="card"><h2>🔔 單筆通知</h2>
+    <div class="row" style="margin:6px 0 0"><label style="cursor:pointer"><input type="checkbox" data-act="big-local"${st.off?'':' checked'}> 有人單筆達 ${fmt(b.min)} 點以上時通知我</label></div>
+    ${st.off?'':`<div class="row" style="margin-top:6px">${bigPermHtml()}</div>`}
+    <div class="sub2">App 開著（或再打開）時，最上面會出現祝賀；App 完全關掉時手機不會響。</div></div>`;
+}
+// 帶進個人連結的內容：要不要發、門檻、各品項的品項點數（個人頁要靠它判斷哪一筆達標）
+function bigBlob(){ const b=state.cfg.big||{}, r=ratesFor(todayKey()), pr={}; Object.keys(r).forEach(pid=>{ if(r[pid].price) pr[pid]=r[pid].price; }); return {on:!!b.on,min:Number(b.min)||0,p:pr}; }
+
 // ---------- 醫師累積點數 ----------
 // 醫師的點數不逐月確認：全部月份累積起來，以 1,000 點為一單位、不定期確認，每次記一筆。
 // 已確認＝這裡記的每一筆（state.led）＋改版前逐月按過的確認（state.pay 裡 d| 開頭的，當成一筆舊紀錄，id 是 'm:月份'）
@@ -1492,7 +1575,7 @@ function buildPayload(){
   Object.assign(rates,liveRates());
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm||(!Object.keys(pm.paid||{}).length&&!pm.cfgT)) return;
     pay[k]={paid:pm.paid||{},cfg:pm.cfg||null,cfgT:pm.cfgT||0}; });
-  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{}},pay,led:state.led||{}};
+  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{},big:c.big||{on:true,min:5000,t:0}},pay,led:state.led||{}};
 }
 const rateSum=r=>r?FIELDS.reduce((t,f)=>t+(Number(r[f])||0),0):0;
 // 本機設定檔（sheet-config.js）的預設值新增了欄位（例如後來才加的科部）時，把還沒填過的欄位補成明確數字、
@@ -1536,6 +1619,7 @@ function mergeRemote(rm){
     if(rc.url!==window.COMMISSION_SHEET_URL) c.url=rc.url; else delete c.url;
     c.tU=Math.max(c.tU||0,rc.tU||0); ch=true;
   }
+  if(rc.big&&(rc.big.t||0)>((c.big&&c.big.t)||0)){ c.big={on:!!rc.big.on,min:Number(rc.big.min)||0,t:rc.big.t}; ch=true; }   // 單筆通知的設定：整份看修改時間
   state.led=state.led||{};
   Object.keys(rm.led||{}).forEach(id=>{ const a=rm.led[id], b=state.led[id]; if(a&&(!b||(a.t||0)>(b.t||0))){ state.led[id]=a; ch=true; } });   // 醫師累積點數的紀錄：逐筆看修改時間
   Object.keys(rm.pay||{}).forEach(k=>{
@@ -1558,6 +1642,9 @@ let _alertsSig=null;
 function renderAlerts(){
   const el=$('alerts'); if(!el) return;
   let h='';
+  if(bigNew.length){ const list=bigNew.slice().reverse();   // 新的排前面
+    h+=`<div class="note big"><div class="bigt">🎉 單筆 ${fmt((state.cfg.big||{}).min)} 點以上</div>${list.slice(0,5).map(x=>`<div class="bigl"><b>${esc(bigText(x))}</b><small>${esc(x.r.d)}</small></div>`).join('')}`+
+      `${list.length>5?`<div class="bigl">…還有 ${list.length-5} 筆</div>`:''}<div class="row" style="margin-top:6px"><button class="btn mini" data-act="big-ok">知道了</button></div></div>`; }
   if(fail) h+=`<div class="note warn">讀不到試算表${state.data.checked?`，目前顯示的是 ${hm(state.data.checked)} 的資料`:''}。　<button class="btn mini outline" data-act="refresh">再試一次</button></div>`;
   if(!VIEW){
     if(sync&&/denied|error/.test(syncSt.k)) h+=`<div class="note warn">雲端同步沒有成功${syncSt.k==='denied'?'（雲端還沒開通）':''}，這台裝置上的資料不受影響。做法與狀態在最下方「其他設定」。</div>`;
@@ -1670,7 +1757,8 @@ async function forceUpdate(){
 // 主任端：替某位專師或醫師建立連結後，把「算他點數需要的最少資料」加密放到雲端的獨立節點——試算表網址、
 // 他那個身分的每件點數（專師＝主要／平分＋平分人數；醫師＝醫師那一欄＋品項點數，用來算他自己的品項總點數）、
 // 他自己的確認紀錄（專師＝各月的確認註記；醫師＝累積點數的每一筆）。
-// 不含另一個身分的點數、科部、原始點數，也不含別人的紀錄；專師那邊也不含品項點數。
+// 另外帶「單筆通知」的設定與各品項的品項點數（big，見 bigBlob）——個人頁要靠它判斷哪一筆達標，所以專師那邊現在也看得到品項點數。
+// 不含另一個身分的點數、科部、原始點數，也不含別人的紀錄。
 // 本人端：用連結裡的金鑰解開，再自己即時讀試算表算出點數，所以主任沒開 App 時數字也會跟著試算表更新。
 // 連結在 cfg.views 裡的鍵：專師＝姓名，醫師＝'d|姓名'（viewWho 拆回身分與姓名）
 const _pubHash={}, pubSt={};
@@ -1692,7 +1780,7 @@ function viewBlob(key){
       if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
       if(Object.keys(m).length) months[k]=m; });
     const led=Object.keys(state.led||{}).map(id=>state.led[id]).filter(r=>r&&!r.del&&r.pk==='d|'+name).map(r=>({amt:Number(r.amt)||0,at:r.at||'',note:r.note||''}));
-    return {v:1,role:'d',name,url:sheetUrl(),rates:docRates(live.products),sets,months,led};
+    return {v:1,role:'d',name,url:sheetUrl(),rates:docRates(live.products),sets,months,led,big:bigBlob()};
   }
   const live=cfgFor(''), months={}, sets={};
   Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=npRates(ratesFor(k)); });
@@ -1701,7 +1789,7 @@ function viewBlob(key){
     if(pm.cfg){ m.rates=npRates(pm.cfg.products); m.n=pm.cfg.sharers.length; m.inPool=pm.cfg.sharers.includes(name); }
     if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
     if(Object.keys(m).length) months[k]=m; });
-  return {v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),sets,n:live.sharers.length,inPool:live.sharers.includes(name),months};
+  return {v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),sets,n:live.sharers.length,inPool:live.sharers.includes(name),months,big:bigBlob()};
 }
 async function publishViews(){
   if(VIEW||!window.crypto||!crypto.subtle) return;
@@ -1776,6 +1864,7 @@ function applyView(b){
     :{doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0,cost:0}; }); return o; };
   const pool=(n,inPool)=>{ if(doc) return []; const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
   state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
+  state.cfg.big=b.big?{on:!!b.big.on,min:Number(b.big.min)||0,p:b.big.p||{}}:{on:false,min:0,p:{}};   // 主任那邊還是舊版放的內容就沒有這一段：先不通知
   state.cfg.rateSets={}; Object.keys(b.sets||{}).forEach(k=>{ state.cfg.rateSets[k]={r:full(b.sets[k]),t:0}; });
   state.pay={}; state.led={};
   (doc?b.led||[]:[]).forEach((r,i)=>{ state.led['v'+i]={pk:'d|'+b.name,amt:Number(r.amt)||0,at:r.at||'',note:r.note||'',t:1}; });
@@ -1880,6 +1969,7 @@ function renderMe(ks){
        '<tr><td class="l mut" colspan="3">還沒有確認紀錄</td></tr>')+`</tbody></table></div></div>`
     :`<div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
       <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>`}
+    ${bigMeHtml()}
     ${installHtml()}
     <div style="text-align:center;margin-top:8px"><button class="btn mini ghost" data-act="me-forget">在這台裝置移除這個連結</button></div>`;
 }
@@ -1887,7 +1977,7 @@ function renderMe(ks){
 // ---------- 事件 ----------
 function act(a,t,ev){
   const k=t.dataset.k;
-  if(VIEW&&!/^(refresh|month|mstep|mpick|myear|today|trend|close|me-forget|me-install|me-paste)$/.test(a)) return;   // 個人查看模式只能看
+  if(VIEW&&!/^(refresh|month|mstep|mpick|myear|today|trend|close|me-forget|me-install|me-paste|big-ok|big-local|big-perm)$/.test(a)) return;   // 個人查看模式只能看
   if(a==='refresh'){ if(VIEW) loadView(); refresh(false); }
   else if(a==='me-install'){ if(_installEvt){ const e=_installEvt; _installEvt=null; e.prompt(); } }
   else if(a==='me-paste'){
@@ -1901,6 +1991,13 @@ function act(a,t,ev){
     if(!confirm('在這台裝置移除這個連結？\n之後要再看，需要重新打開主任給的連結。')) return;
     try{ localStorage.removeItem(LS_ME); }catch(e){} location.href=location.pathname;
   }
+  else if(a==='big-ok') bigAck();
+  else if(a==='big-perm'){ try{ const q=Notification.requestPermission(()=>renderAll()); if(q&&q.then) q.then(()=>renderAll()); }catch(e){} }
+  else if(a==='big-local'){ const st=bigState(); st.off=t.checked?0:1; bigSave(st); renderAll(); }
+  else if(a==='big-on'){ state.cfg.big=Object.assign({},state.cfg.big,{on:!!t.checked,t:Date.now()}); saveState(); renderAll(); }
+  else if(a==='big-save'){ const v=Math.max(0,Math.round(Number(($('big-min')||{}).value)||0));
+    if(!v){ alert('請輸入門檻點數。'); return; }
+    state.cfg.big=Object.assign({},state.cfg.big,{min:v,t:Date.now()}); saveState(); document.activeElement&&document.activeElement.blur(); renderAll(); }
   else if(a==='led') showLed(k);
   else if(a==='led-add') ledAdd(k);
   else if(a==='led-del') ledDel(k,t.dataset.id);

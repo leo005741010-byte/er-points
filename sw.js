@@ -43,3 +43,12 @@ self.addEventListener('fetch', e=>{
     }).catch(()=>cached))
   );
 });
+
+// 點通知：已經開著就切回那個視窗，否則開啟 App
+self.addEventListener('notificationclick', e=>{
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(cs=>{
+    for(const c of cs){ if('focus' in c) return c.focus(); }
+    return self.clients.openWindow('./');
+  }));
+});
