@@ -251,7 +251,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.10a';
+const APP_VER='2026.10.11a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -1313,7 +1313,7 @@ function doPayAll(role){
 }
 
 // ---------- 單筆通知 ----------
-// 試算表的一筆（一列）品項點數達到門檻時，祝賀那一筆的主要專師：「賀 姓名，水性×1、除疤×1」。
+// 試算表的一筆（一列）品項點數達到門檻時，祝賀那一筆的主要專師與醫師：「賀 專師X醫師，水性×1、除疤×1」（使用者指定的寫法；少一個就只寫有的那位）。
 // 背後沒有伺服器在發送：是每台裝置在 App 開著（或再打開）、讀到試算表時自己發現新的紀錄——
 // 畫面最上面出現一條祝賀；這台裝置允許跳出通知的話，當天的新紀錄另外跳一則系統通知。App 完全關掉時不會響。
 // 要不要發與門檻（cfg.big）由主任端設定、會同步，也帶進每個人的個人連結；各裝置可以自己關掉（LS_BIG 的 off）。
@@ -1333,7 +1333,7 @@ function bigItems(){
     md.rows.forEach((r,i)=>{ const v=bigVal(r,k); if(v>=b.min) out.push({id:k+'|'+(r.n!==''&&r.n!=null?r.n:'i'+i),k,r,v}); }); });
   return out;
 }
-const bigText=x=>`賀 ${x.r.np||x.r.doc||'（未填姓名）'}，${Object.keys(x.r.it).map(pid=>`${prodName(pid)}×${x.r.it[pid]}`).join('、')}`;
+const bigText=x=>`賀 ${[x.r.np,x.r.doc].filter(Boolean).join('X')||'（未填姓名）'}，${Object.keys(x.r.it).map(pid=>`${prodName(pid)}×${x.r.it[pid]}`).join('、')}`;
 function bigNotify(x){
   try{
     if(!('Notification' in window)||Notification.permission!=='granted') return;
@@ -1374,7 +1374,7 @@ function bigCfgHtml(){
       <span>單筆品項點數達</span><input type="number" id="big-min" inputmode="numeric" min="0" step="500" value="${Number(b.min)||0}" style="width:100px"><span>點以上</span>
       <button class="btn mini outline" data-act="big-save">儲存</button></div>
     <div class="row" style="margin-top:6px">${bigPermHtml()}</div>
-    <div class="hint" style="margin-top:6px">試算表有一筆（一列）的品項點數達到這個數字時，所有人的 App 最上面會出現「賀 主要專師，品項×數量」；允許跳出通知的裝置，當天的新紀錄還會另外跳一則通知。
+    <div class="hint" style="margin-top:6px">試算表有一筆（一列）的品項點數達到這個數字時，所有人的 App 最上面會出現「賀 主要專師X醫師，品項×數量」；允許跳出通知的裝置，當天的新紀錄還會另外跳一則通知。
       <b>要 App 開著（或再打開）時才收得到，App 完全關掉時手機不會響。</b>專師、醫師可以在自己的頁面關掉。</div>`;
 }
 // 專師、醫師個人頁最下面的那張卡
