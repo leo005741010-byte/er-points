@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* iPhone 防放大（全 App 統一，主任 2026-10-17）：iPhone／iPad 點輸入框不自動放大，兩指放大照常；Android 不加 maximum-scale（會連兩指放大都鎖掉） */
+(function(){var m=document.querySelector('meta[name=viewport]');if(m&&(/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1))&&m.content.indexOf('maximum-scale')<0)m.content+=',maximum-scale=1';})();</script>
+<style>html,body,*{touch-action:manipulation}/* 連點兩下不放大，兩指放大照常 */</style>
 <meta name="robots" content="noindex,nofollow">
 <title>急診點數</title>
 <script>
