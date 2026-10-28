@@ -254,7 +254,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.11a';
+const APP_VER='2026.10.28a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -292,9 +292,10 @@ const isDocView=()=>!!(viewInfo&&viewInfo.role==='d');   // 個人查看頁是�
 const mePk=()=>(isDocView()?'d|':'n|')+(viewInfo?viewInfo.name:'');
 const PRODUCTS=[
   {id:'dressing',name:'水性',  re:/敷料/},
-  {id:'scar',    name:'除疤',  re:/疤/},
+  {id:'scar',    name:'除疤',  re:/疤(?!.*膠片)/},   // 試算表「疤痕凝膠」；「疤痕膠片」是另一個品項，不可算進來
   {id:'glue',    name:'黏著',  re:/黏著|黏合/},
   {id:'repair',  name:'修護液',re:/修護/},
+  {id:'film',    name:'膠片',  re:/膠片/},   // 試算表「疤痕膠片」（10月分頁起）
 ];
 // 每一件的點數怎麼分：doc 醫師、promo 主要、pool 放進專師平分池、fund 科部（不屬於個人）；
 // price＝每件的品項點數，只用來算「品項總點數」；cost＝每件的原始點數，只用來算「原始總點數」與「總點數差」。兩個都不影響每個人的點數
@@ -1061,7 +1062,7 @@ function refreshCfgRow(pid){
 }
 
 // ---------- 組成橫條 ----------
-const PROD_COLOR={dressing:'#1a4a7a',scar:'#5b9bd5',glue:'#ed7d31',repair:'#2e9e6b'}, XCOLOR=['#8e6bb5','#c9a34a','#4fb3bf','#d16a8a'];
+const PROD_COLOR={dressing:'#1a4a7a',scar:'#5b9bd5',glue:'#ed7d31',repair:'#2e9e6b',film:'#c0504d'}, XCOLOR=['#8e6bb5','#c9a34a','#4fb3bf','#d16a8a'];
 function prodColor(pid){ if(PROD_COLOR[pid]) return PROD_COLOR[pid]; const i=productList().map(p=>p.id).filter(x=>!PROD_COLOR[x]).indexOf(pid); return XCOLOR[(i<0?0:i)%XCOLOR.length]; }
 // 一條橫的長方形，各部分照占比分色；下面逐項列出點數與百分比。parts=[{label,note,v,c}]，由大到小排；0 的不畫、列在最後
 function mixHtml(parts){
