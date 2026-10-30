@@ -254,7 +254,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.28a';
+const APP_VER='2026.10.30a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -1220,7 +1220,8 @@ function cumHtml(m){
     `<div class="cumh">逐月趨勢</div>`;
 }
 function showTrend(m){
-  const T=TREND[m]; if(!T||(VIEW&&(!/^my/.test(m)||(/^my(sales|rate)$/.test(m)&&!isDocView())))) return;   // 個人頁只看自己的；品項總點數那兩張只有醫師頁有
+  // 個人頁只看自己的：醫師頁＝my 開頭的四張；專師頁＝我的點數／我的主要件數，加上全體的品項總點數／總件數
+  const T=TREND[m]; if(!T||(VIEW&&!(isDocView()?/^my/:/^(myamt|myunits|sales|units)$/).test(m))) return;
   const pts=trendPts(m), anyH=pts.some(p=>p.h);
   const itTxt=k=>{ const it=histOf(k).it||{}; return Object.keys(it).filter(pid=>it[pid]).map(pid=>`${esc(prodName(pid))} ${it[pid]}`).join('・'); };
   const cumH=cumHtml(m);
@@ -1769,8 +1770,9 @@ const _pubHash={}, pubSt={};
 let _pubBusy=false,_pubAgain=false;
 // 連結帶 openExternalBrowser=1：在 LINE 裡點開時會直接交給手機的瀏覽器（LINE 內建瀏覽器不能加到主畫面）
 const viewUrl=tok=>(location.protocol==='file:'?PUBLIC_URL:location.origin+location.pathname.replace(/[^/]*$/,''))+'me.html?openExternalBrowser=1#me='+tok;
-const npRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={promo:Number(r.promo)||0,pool:Number(r.pool)||0}; }); return o; };
 // price 沒填（較早的月份快照沒有這一欄）要留 null，不能寫成 0：個人頁才會和主任頁一樣退回用現行的品項點數（見 rateOf）
+// 專師也帶 price：專師頁要顯示全體的品項總點數
+const npRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={promo:Number(r.promo)||0,pool:Number(r.pool)||0,price:r.price==null?null:Number(r.price)||0}; }); return o; };
 const docRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ const r=products[pid]||{}; o[pid]={doc:Number(r.doc)||0,price:r.price==null?null:Number(r.price)||0}; }); return o; };
 const viewWho=key=>/^d\|/.test(key)?{role:'d',name:key.slice(2)}:{role:'n',name:key};
 function viewBlob(key){
@@ -1865,7 +1867,7 @@ function installHtml(){
 function applyView(b){
   const doc=b.role==='d';
   const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]=doc?{doc:Number(r[pid].doc)||0,promo:0,pool:0,fund:0,price:r[pid].price==null?null:Number(r[pid].price)||0,cost:0}
-    :{doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:0,cost:0}; }); return o; };
+    :{doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:r[pid].price==null?null:Number(r[pid].price)||0,cost:0}; }); return o; };
   const pool=(n,inPool)=>{ if(doc) return []; const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
   state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
   state.cfg.big=b.big?{on:!!b.big.on,min:Number(b.big.min)||0,p:b.big.p||{}}:{on:false,min:0,p:{}};   // 主任那邊還是舊版放的內容就沒有這一段：先不通知
@@ -1886,7 +1888,7 @@ async function loadView(){
     if(!b){ viewInfo=null; viewErr='gone'; }
     else{ const first=!viewInfo, sig=stable(b);
       if(first||viewInfo.sig!==sig){ applyView(b); viewInfo={name:b.name,role:b.role==='d'?'d':'n',inPool:!!b.inPool,sig,
-          noPrice:b.role==='d'&&!Object.values(b.rates||{}).some(r=>r&&r.price!=null)}; }   // noPrice＝主任那邊還是舊版放上來的內容，沒帶品項點數
+          noPrice:!Object.values(b.rates||{}).some(r=>r&&r.price!=null)}; }   // noPrice＝主任那邊還是舊版放上來的內容，沒帶品項點數
       viewErr=null;
       if(first){ renderAll(); refresh(true); return; }
     }
@@ -1913,7 +1915,7 @@ function renderMe(ks){
   const stOf={}; all.forEach(({k,p})=>{ stOf[k]=!p.amt&&!p.rec?'empty':p.rec&&p.rec.amt>=p.amt?'done':p.rec?'part':'none'; });
   renderMonthBar(ks,k=>doc?'':(stOf[k]||'empty'),doc?'':'<span><i class="done"></i>已確認</span><span><i class="none"></i>還沒確認</span>');   // 醫師不逐月確認，月份上不標狀態
   const {c,p}=all.find(x=>x.k===cur), pids=monthPids(c).filter(pid=>p.it[pid]), rows=c.rows.filter(r=>(doc?r.doc:r.np)===name);
-  const hrs=doc?docHours(name,cur):null, rate=perHour(p.sales||0,hrs), cum=doc?docCum(name):null, noP=doc&&viewInfo.noPrice;
+  const hrs=doc?docHours(name,cur):null, rate=perHour(p.sales||0,hrs), cum=doc?docCum(name):null, noP=viewInfo.noPrice;
   const hrTxt=hrs==null?'還沒讀到班表':`上班 ${hrs} 小時${cur===todayKey()?'（算到今天）':''}`;
   // 點數說明：這個月適用的各品項每件點數（專師：主要＝負責那一件的人拿的、平分＝每件另外給全體平分名單均分的；醫師：就是醫師那一欄）
   const N=c.cfg.sharers.length, f=doc?'doc':'promo';
@@ -1940,7 +1942,13 @@ function renderMe(ks){
       :`<div class="tile clk" data-act="trend" data-m="mysales" role="button"><span class="tg">📈</span><div class="l">品項總點數</div><div class="v">${fmt(p.sales||0)}</div><div class="s">${vsPrevHtml('mysales',cur)}</div></div>
       <div class="tile clk" data-act="trend" data-m="myrate" role="button"><span class="tg">📈</span><div class="l">每小時品項總點數</div><div class="v">${rate==null?'—':fmt(rate)}</div>
         <div class="s">${hrs?vsPrevHtml('myrate',cur):''}</div><div class="s">${hrTxt}</div></div>`}</div>`
-    :`<div class="tiles"><div class="tile" style="grid-column:1/-1"><div class="l">池子占比</div><div class="v">${pct==null?'—':pct.toFixed(1)+'%'}</div>
+    :`<div class="tiles">
+      ${noP?`<div class="tile"><div class="l">品項總點數</div><div class="v">—</div><div class="s">等主任的 App 更新後就會顯示</div></div>`
+      :`<div class="tile clk" data-act="trend" data-m="sales" role="button"><span class="tg">📈</span><div class="l">品項總點數</div><div class="v">${fmt(c.sales)}</div>
+        <div class="s">${vsPrevHtml('sales',cur)}</div>${projHtml('sales',cur)?`<div class="s">${projHtml('sales',cur)}</div>`:''}</div>`}
+      <div class="tile clk" data-act="trend" data-m="units" role="button"><span class="tg">📈</span><div class="l">總件數</div><div class="v">${c.units}</div>
+        <div class="s">${vsPrevHtml('units',cur)}</div>${projHtml('units',cur)?`<div class="s">${projHtml('units',cur)}</div>`:''}<div class="s">${c.rows.length} 筆</div></div>
+      <div class="tile" style="grid-column:1/-1"><div class="l">池子占比</div><div class="v">${pct==null?'—':pct.toFixed(1)+'%'}</div>
       <div class="s">我的點數 ÷ 全體專師的點數</div><div class="bar"><span style="width:${pct==null?0:Math.min(100,pct)}%"></span></div></div></div>`}
     ${mixCard('我的點數的組成',(doc?[]:[{label:'平分',note:'',v:p.share,c:'#9aa7b8'}]).concat(pids.map(pid=>({label:prodName(pid),note:(doc?'':'主要 ')+p.it[pid]+' 件',v:p.it[pid]*rateOf(c.cfg,pid)[f],c:prodColor(pid)}))))}
     <details class="card sec" data-sec="me-expl"${isOpen('me-expl')?' open':''}><summary><span>點數說明</span></summary>`+
