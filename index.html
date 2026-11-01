@@ -254,7 +254,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.10.30a';
+const APP_VER='2026.11.01a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -559,17 +559,21 @@ function parseDate(v){
   if((m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})$/))) return {y:null,m:+m[1],d:+m[2]};
   return null;
 }
-// rows: [{seq,date,cnt:{pid:n},np,doc}]；tabM＝分頁名稱的月份。月份以分頁為準、年份取該分頁多數列的年份
+// rows: [{seq,date,cnt:{pid:n},np,doc}]；tabM＝分頁名稱的月份。年份取該分頁多數列的年份（跨年時加減一年）。
+// 月份以該列日期為準：跨月忘了換分頁（11/1 填在 10月分頁）算 11月。沒日期、或日期和分頁差超過一個月（多半打錯）才照分頁月份，後者記進 mismatch 提醒。
 function addRows(acc,rows,tabM){
   const yrs={};
   rows.forEach(r=>{ if(r.date&&r.date.y) yrs[r.date.y]=(yrs[r.date.y]||0)+1; });
   const yTop=Number(Object.keys(yrs).sort((a,b)=>yrs[b]-yrs[a])[0])||new Date().getFullYear();
   rows.forEach(r=>{
     const tot=sumVals(r.cnt); if(tot<=0) return;
-    let m=r.date&&r.date.m;
-    if(tabM){ if(m&&m!==tabM) acc.mismatch++; m=tabM; }
+    let m=r.date&&r.date.m, y=tabM?yTop:((r.date&&r.date.y)||yTop);
+    const gap=tabM&&m?(m-tabM+12)%12:0;   // 日期比分頁晚幾個月：1＝下個月、11＝上個月
+    if(gap===1){ if(m===1) y++; }
+    else if(gap===11){ if(m===12) y--; }
+    else if(tabM){ if(gap) acc.mismatch++; m=tabM; }
     if(!m){ acc.undated+=tot; return; }
-    const y=tabM?yTop:((r.date&&r.date.y)||yTop), key=`${y-1911}-${pad(m)}`;
+    const key=`${y-1911}-${pad(m)}`;
     (acc.months[key]||(acc.months[key]={rows:[]})).rows.push({
       n:r.seq!=null&&r.seq!==''?r.seq:'', d:r.date&&r.date.d?`${r.date.m}/${r.date.d}`:'',
       np:normName(r.np), doc:normName(r.doc), it:r.cnt});
@@ -639,7 +643,7 @@ async function fetchSheet(url){
   });
   // 多數列月份和分頁名稱對不上的內容：
   //  ・跟已採用分頁大半相同 → 是「第一個分頁」的回聲（有人正在輸入，各分頁回應差一兩列）→ 略過
-  //  ・只有一個分頁回這份 → 真的分頁、只是日期打錯 → 照分頁月份計
+  //  ・只有一個分頁回這份 → 真的分頁 → 各列照 addRows 的規則算
   //  ・好幾個分頁都回這份、又沒有一頁月份對得上 → 無法判斷是哪個月，不計、出提醒
   const gs=Object.values(groups), goodK={};
   gs.forEach(g=>{ if(g.good) g.rows.forEach(r=>goodK[r.k]=(goodK[r.k]||0)+1); });
@@ -819,7 +823,7 @@ function monthWarnings(c,list){
   if(np.length) w.push(`品項「${np.map(prodName).join('、')}」還沒填品項點數，「品項總點數」沒算到它——請在「每件點數」那張表的「品項點數」欄填上。`);
   if(!c.cfg.sharers.length&&c.pool) w.push(`平分名單是空的，專師平分池 ${fmt(c.pool)} 點全部歸到科部了——請在「每件點數」下方的平分名單加入姓名。`);
   if(c.gone) w.push('試算表現在讀不到這個月的分頁，以下是最後一次讀到的內容（因為已有確認紀錄所以保留）。');
-  if(sw.mismatch) w.push(`試算表有 ${sw.mismatch} 筆的日期與所在分頁月份不符（已依分頁月份計）。`);
+  if(sw.mismatch) w.push(`試算表有 ${sw.mismatch} 筆的日期和所在分頁差超過一個月，可能打錯（暫依分頁月份計）。`);
   if(sw.undated) w.push(`試算表有 ${sw.undated} 件沒有日期也不在月份分頁、未計入。`);
   if(sw.dropped) w.push(`試算表有 ${sw.dropped} 件無法判斷屬於哪個月、未計入，請檢查第一個分頁的日期。`);
   return w;
