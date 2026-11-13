@@ -254,7 +254,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.01b';
+const APP_VER='2026.11.14';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -291,7 +291,7 @@ let viewInfo=null, viewErr=null, _mePicked=false;   // viewInfo＝解開的個�
 const isDocView=()=>!!(viewInfo&&viewInfo.role==='d');   // 個人查看頁是醫師的（否則是專師的）
 const mePk=()=>(isDocView()?'d|':'n|')+(viewInfo?viewInfo.name:'');
 const PRODUCTS=[
-  {id:'dressing',name:'水性',  re:/敷料/},
+  {id:'dressing',name:'水性',  re:/敷料|水性/},
   {id:'scar',    name:'除疤',  re:/疤(?!.*膠片)/},   // 試算表「疤痕凝膠」；「疤痕膠片」是另一個品項，不可算進來
   {id:'glue',    name:'黏著',  re:/黏著|黏合/},
   {id:'repair',  name:'修護液',re:/修護/},
@@ -335,6 +335,7 @@ function normState(s){
   s.led=s.led||{};   // 醫師累積點數的確認紀錄 {id:{pk:'d|姓名',amt,at,note,t}｜{del:1,t}}，見 docCumAll()
   s.data=s.data||{}; s.data.months=s.data.months||{}; s.data.extra=s.data.extra||{};
   s.data.roster=s.data.roster||{}; s.data.roster.np=s.data.roster.np||[]; s.data.roster.doc=s.data.roster.doc||[];
+  pruneExtra(s.data);
   // {'115-09':{cfg:{products,sharers}（第一次註記時的設定快照）,cfgT,paid:{'d|姓名':{amt,at,t}｜{del:1,t}}}}
   // t／cfgT＝最後修改時間（毫秒），跨裝置合併時較新的為準；取消註記留 {del:1,t} 才能同步到別台。舊資料補 1。
   s.pay=s.pay||{};
@@ -360,6 +361,14 @@ let busy=false, fail=null, delta=null;
 
 // ---------- 設定 ----------
 function sheetUrl(){ return state.cfg.url||window.COMMISSION_SHEET_URL||''; }
+// data.extra＝試算表裡認不得、但確定是數字欄的欄名，每一個會在「每件點數」多列一個品項。
+// 以前讀到過就一直留著，所以欄名後來改成認得的、或那一欄已經不在試算表上，同一個品項就會列兩次（例如兩個「水性」）。
+// 現在只留「資料裡真的有件數、而且現在還認不得」的欄名。
+function pruneExtra(D){
+  const used={};
+  Object.values(D.months||{}).forEach(m=>((m&&m.rows)||[]).forEach(r=>Object.keys((r&&r.it)||{}).forEach(pid=>used[pid]=1)));
+  Object.keys(D.extra||{}).forEach(l=>{ if(!used['x:'+l]||PRODUCTS.some(p=>p.name===l||p.re.test(l))) delete D.extra[l]; });
+}
 function productList(){
   return PRODUCTS.map(p=>({id:p.id,name:p.name}))
     .concat(Object.keys(state.data.extra).map(l=>({id:'x:'+l,name:l})));
@@ -705,7 +714,7 @@ function mergeResult(acc,source){
     keys.forEach(k=>{ D.months[k]={rows:acc.months[k].rows}; });
   }
   if(acc.roster.np.length) D.roster=acc.roster;
-  Object.assign(D.extra,acc.extra);
+  Object.assign(D.extra,acc.extra); pruneExtra(D);
   const changed=JSON.stringify([D.months,D.roster,D.extra])!==before, now=new Date().toISOString();
   D.checked=now; if(changed||!D.changed) D.changed=now;
   D.source=source; D.warn={undated:acc.undated,mismatch:acc.mismatch,dropped:acc.dropped||0};
