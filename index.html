@@ -107,8 +107,6 @@ details.card[open]>summary{margin-bottom:12px}
 .up{color:var(--ok);font-weight:700}.dn{color:var(--warn);font-weight:700}
 .est{display:inline-block;font-size:11px;font-weight:400;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:6px;vertical-align:1px}
 .estit{font-size:11.5px;color:var(--mut);white-space:normal}
-.gsp{margin-top:6px;padding-top:5px;border-top:1px dashed var(--line);font-size:12.5px;color:var(--mut)}
-.gsp span{display:flex;justify-content:space-between;gap:6px}.gsp b{color:var(--navy-dark);font-variant-numeric:tabular-nums}
 .estit.gsub{text-align:right;white-space:nowrap}
 .tile.clk{cursor:pointer;position:relative}
 .tile.clk:hover{border-color:#8fb1d6;box-shadow:0 2px 10px rgba(26,74,122,.12)}
@@ -257,7 +255,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.14a';
+const APP_VER='2026.11.15a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -301,7 +299,7 @@ const PRODUCTS=[
   {id:'film',    name:'膠片',  re:/^(?!.*銀).*(膠片|貼片)/},   // 試算表「疤痕膠片」（10月分頁起）
   {id:'silver',  name:'銀離子',re:/銀/},   // 試算表還沒有這一欄；欄名有「銀」就算這一項
 ];
-// 品項分兩組，各自算總點數／原始總點數／總點數差／折讓點數。組名只放本機設定檔與加密的雲端設定（見 grpName）
+// 品項分兩組，點開「總點數」時分開看。組名只放本機設定檔與加密的雲端設定（見 grpName）
 const GROUPS=[{id:'g1',pids:['dressing','scar','glue','repair']},{id:'g2',pids:['film','silver']}];
 const grpOf=pid=>{ const g=GROUPS.find(g=>g.pids.includes(pid)); return g?g.id:null; };
 const grpName=gid=>{ const n=(state.cfg.grp&&state.cfg.grp.n)||window.COMMISSION_GROUP_NAMES||{}; return n[gid]||(gid==='g1'?'第一組':'第二組'); };
@@ -433,14 +431,14 @@ function rateOf(cfg,pid,live){
 function calcMonth(key,cfgOverride){
   const md=state.data.months[key], cfg=cfgOverride||monthCfg(key), live=ratesFor(key), rc={};
   const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,fund:0,fundIt:{},vendor:0,units:0,sales:0,cost:0,noPrice:{},zeroRate:{},grp:{}};
-  GROUPS.forEach(g=>c.grp[g.id]={sales:0,vendor:0,cost:0});
+  GROUPS.forEach(g=>c.grp[g.id]={vendor:0});
   c.rows.forEach(r=>Object.keys(r.it).forEach(pid=>{
     const q=r.it[pid], rt=rc[pid]||(rc[pid]=rateOf(cfg,pid,live)), gp=c.grp[grpOf(pid)];
     if(!cfg.products[pid]||!(rt.doc+rt.promo+rt.pool+rt.fund)) c.zeroRate[pid]=1;
     c.prod[pid]=(c.prod[pid]||0)+q; c.units+=q;
     c.sales+=q*rt.price; if(!rt.price) c.noPrice[pid]=1;
     c.cost+=q*rt.cost;
-    if(gp){ gp.sales+=q*rt.price; gp.cost+=q*rt.cost; gp.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund); }
+    if(gp) gp.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
     const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0,sales:0}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc; d.sales+=q*rt.price;
     const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=q*rt.promo;
     c.pool+=q*rt.pool; c.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
@@ -898,10 +896,10 @@ function renderMonth(){
   // 組成橫條：這個月的品項總點數，各品項各佔多少
   h+=mixCard('品項總點數的組成',pids.map(pid=>({label:prodName(pid),note:c.prod[pid]+' 件',v:c.prod[pid]*rateOf(c.cfg,pid).price,c:prodColor(pid)})));
   h+=`<div class="tiles">
-    <div class="tile clk" data-act="trend" data-m="vendor" role="button"><span class="tg">📈</span><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div>${grpHtml(c,'vendor')}</div>
-    <div class="tile clk" data-act="trend" data-m="cost" role="button"><span class="tg">📈</span><div class="l">原始總點數</div><div class="v">${fmt(c.cost)}</div><div class="s">${c.cost?vsPrevHtml('cost',cur):'還沒填原始點數'}</div>${grpHtml(c,'cost')}</div>
-    <div class="tile clk" data-act="trend" data-m="diff" role="button"><span class="tg">📈</span><div class="l">總點數差</div><div class="v">${fmt(c.sales-c.cost)}</div><div class="s">品項總點數 − 原始總點數</div>${grpHtml(c,'diff')}</div>
-    <div class="tile clk" data-act="trend" data-m="rebate" role="button"><span class="tg">📈</span><div class="l">折讓點數</div><div class="v">${fmt(c.cost-c.vendor)}</div><div class="s">${c.cost?vsPrevHtml('rebate',cur):'還沒填原始點數'}</div>${grpHtml(c,'rebate')}</div>
+    <div class="tile clk" data-act="trend" data-m="vendor" role="button"><span class="tg">📈</span><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div></div>
+    <div class="tile clk" data-act="trend" data-m="cost" role="button"><span class="tg">📈</span><div class="l">原始總點數</div><div class="v">${fmt(c.cost)}</div><div class="s">${c.cost?vsPrevHtml('cost',cur):'還沒填原始點數'}</div></div>
+    <div class="tile clk" data-act="trend" data-m="diff" role="button"><span class="tg">📈</span><div class="l">總點數差</div><div class="v">${fmt(c.sales-c.cost)}</div><div class="s">品項總點數 − 原始總點數</div></div>
+    <div class="tile clk" data-act="trend" data-m="rebate" role="button"><span class="tg">📈</span><div class="l">折讓點數</div><div class="v">${fmt(c.cost-c.vendor)}</div><div class="s">${c.cost?vsPrevHtml('rebate',cur):'還沒填原始點數'}</div></div>
     <div class="tile"><div class="l">醫師點數合計</div><div class="v">${fmt(dTot)}</div><div class="s">${docs.filter(p=>p.amt>0).length} 位</div></div>
     <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">主要 ${fmt(promoTot)}＋平分 ${fmt(c.share*c.cfg.sharers.length)}</div></div>
     ${fp?`<div class="tile"><div class="l">科部</div><div class="v">${fmt(fp.amt)}</div><div class="s">不屬於個人</div></div>`:''}
@@ -1115,25 +1113,21 @@ const histOf=k=>{ const h=(state.cfg.hist||{})[k]; return h&&!h.del&&!state.data
 const histCost=k=>Number(histOf(k).cost)||0;
 const histSales=k=>{ const it=histOf(k).it||{}, r=ratesFor(k); return Object.keys(it).reduce((t,pid)=>t+it[pid]*((r[pid]||ZERO).price||0),0); };
 const histVendor=k=>{ const it=histOf(k).it||{}, r=ratesFor(k); return Object.keys(it).reduce((t,pid)=>{ const x=r[pid]||ZERO; return t+it[pid]*(x.doc+x.promo+x.pool+x.fund); },0); };
-// 兩組各自的值。m＝vendor 總點數｜cost 原始總點數｜diff 總點數差｜rebate 折讓點數；x＝calcMonth 的結果或其中一組（欄位相同）
-const GRP_VAL={vendor:x=>x.vendor, cost:x=>x.cost, diff:x=>x.sales-x.cost, rebate:x=>x.cost-x.vendor};
-// 更早的月份：用推估件數按組換算。報表只有原始總點數的合計，照各組推估的原始點數比例分（全是第一組的品項時就整筆歸第一組）
+// 總點數分兩組（只出現在點開「總點數」的視窗）。更早的月份用推估件數按組換算
 function histGrp(k){
-  const it=histOf(k).it||{}, r=ratesFor(k), o={}; let ec=0;
-  GROUPS.forEach(g=>o[g.id]={sales:0,vendor:0,cost:0,ec:0});
-  Object.keys(it).forEach(pid=>{ const gp=o[grpOf(pid)], x=r[pid]||ZERO, q=it[pid]; if(!gp) return;
-    gp.sales+=q*(x.price||0); gp.vendor+=q*(x.doc+x.promo+x.pool+x.fund); gp.ec+=q*(x.cost||0); ec+=q*(x.cost||0); });
-  const hc=histCost(k); GROUPS.forEach((g,i)=>{ o[g.id].cost=ec?hc*o[g.id].ec/ec:(i===0?hc:0); });
+  const it=histOf(k).it||{}, r=ratesFor(k), o={};
+  GROUPS.forEach(g=>o[g.id]={vendor:0});
+  Object.keys(it).forEach(pid=>{ const gp=o[grpOf(pid)], x=r[pid]||ZERO; if(gp) gp.vendor+=it[pid]*(x.doc+x.promo+x.pool+x.fund); });
   return o;
 }
-const grpSrc=k=>state.data.months[k]?calcMonth(k):{sales:histSales(k),vendor:histVendor(k),cost:histCost(k),grp:histGrp(k)};
-// [{name,v}]：兩組各一項；有不屬於任何一組的品項時多一項「其他」，加起來等於合計
-function grpParts(c,m){
-  const f=GRP_VAL[m], out=GROUPS.map(g=>({name:grpName(g.id),v:f(c.grp[g.id])})), o=f(c)-out.reduce((t,x)=>t+x.v,0);
-  if(Math.round(o)) out.push({name:'其他',v:o});
+const grpSrc=k=>state.data.months[k]?calcMonth(k):{vendor:histVendor(k),grp:histGrp(k)};
+// [{name,v,c}]：兩組各一項；有不屬於任何一組的品項時多一項「其他」，加起來等於總點數
+const GRP_COLOR={g1:'#1a4a7a',g2:'#c0504d'};
+function grpParts(c){
+  const out=GROUPS.map(g=>({name:grpName(g.id),v:c.grp[g.id].vendor,c:GRP_COLOR[g.id]})), o=c.vendor-out.reduce((t,x)=>t+x.v,0);
+  if(Math.round(o)) out.push({name:'其他',v:o,c:'#b8c2cc'});
   return out;
 }
-const grpHtml=(c,m)=>`<div class="gsp">${grpParts(c,m).map(x=>`<span>${esc(x.name)}<b>${fmt(x.v)}</b></span>`).join('')}</div>`;
 // hist＝更早的月份怎麼算（沒有就只畫試算表有的月份）；est＝更早月份的值是推估的（圖上畫空心點、虛線）
 const TREND={
   sales:  {title:'品項總點數',  unit:'點', get:k=>calcMonth(k).sales, hist:k=>histSales(k), est:1},
@@ -1272,12 +1266,15 @@ function showTrend(m){
   const cumH=cumHtml(m);
   // 主任頁點「品項總點數」：最上面先看這個月各醫師各占多少
   const who=m==='sales'&&!VIEW&&cur&&state.data.months[cur]?people(calcMonth(cur)).filter(p=>p.role==='d'&&p.sales>0):[];
-  const whoH=who.length?`<div class="cumh">${keyLabel(cur)}・各醫師的占比</div>`+mixHtml(who.map(p=>({label:p.name||'（未填醫師）',note:sumVals(p.it)+' 件',v:p.sales,c:personColor('d',p.name)}))):'';
+  const whoH=(who.length?`<div class="cumh">${keyLabel(cur)}・各醫師的占比</div>`+mixHtml(who.map(p=>({label:p.name||'（未填醫師）',note:sumVals(p.it)+' 件',v:p.sales,c:personColor('d',p.name)}))):'')+
+    // 主任頁點「總點數」：最上面先看這個月兩組各多少
+    (m==='vendor'&&!VIEW&&cur&&state.data.months[cur]?(()=>{ const ps=grpParts(calcMonth(cur)), mh=mixHtml(ps.map(x=>({label:x.name,note:'',v:x.v,c:x.c})));
+      return mh?`<div class="cumh">${keyLabel(cur)}・${ps.map(x=>esc(x.name)).join('／')}</div>${mh}`:''; })():'');
   $('dlg').innerHTML=`<h2>${T.title}${cumH?'':'・逐月趨勢'}<button class="btn mini ghost" data-act="close">關閉</button></h2>
     ${whoH}${cumH}${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
     <div class="tw"><table><thead><tr><th class="l">月份</th><th>${T.title}</th><th>較上月</th></tr></thead><tbody>`+
     pts.map((p,i)=>{ const sp=prevSamePeriod(m,p.k), pv=sp?sp.pv:(i>0&&pts[i-1].k===shiftKey(p.k,-1)?pts[i-1].v:null), d=pv==null?null:pctVs(p.v,pv);
-      const gx=GRP_VAL[m]&&!VIEW?grpParts(grpSrc(p.k),m):null;   // 總點數這四張：每個月的值下面列兩組各多少
+      const gx=m==='vendor'&&!VIEW?grpParts(grpSrc(p.k)):null;   // 總點數：每個月的值下面列兩組各多少
       return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${p.e&&m!=='diff'&&m!=='rebate'?`<div class="estit">推估件數：${itTxt(p.k)}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}${gx?`<div class="estit gsub">${gx.map(x=>`${esc(x.name)} ${fmt(x.v)}`).join('<br>')}</div>`:''}</td><td class="n">${d==null?'—':pctHtml(d)+(sp?'<span class="est">同期</span>':'')}</td></tr>`; }).join('')+
     `</tbody></table></div>
     <div class="sub2">每個月一個點；橘色是目前正在看的月份。${MTD[m]?'這個月還沒過完，所以它的「較上月」比的是上個月同期（1 日到同一天），標「同期」。':'這個月還沒過完時，數字會比完整的月份低。'}</div>`+
