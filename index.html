@@ -220,6 +220,17 @@ pre.rule{background:#0f2238;color:#e8f0fa;border-radius:8px;padding:10px 12px;fo
   table.ppl tr.tot{background:#f4f7fb;border-radius:8px;padding:10px 8px;border-bottom:none}
   table.ppl tr.bad{background:var(--badbg)}
   .pdate{width:120px}
+  /* 手機：每件點數表改成一個品項一塊（品項＋廠牌一行，六個輸入格兩欄排，下面一行是自動加總），不用左右捲 */
+  table.rates,table.rates tbody{display:block}
+  table.rates thead{display:none}
+  table.rates tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;padding:12px 2px;border-bottom:1px solid var(--line)}
+  table.rates td{display:block;border:none;padding:0;text-align:left;white-space:normal}
+  table.rates td[data-l]::before{content:attr(data-l);display:block;font-size:12px;color:var(--mut);margin-bottom:2px}
+  table.rates td.rn{font-size:16.5px;align-self:center}
+  table.rates td.rb{text-align:right}
+  table.rates td.rc{font-size:13.5px}
+  table.rates td.rc:last-child{grid-column:1/-1}
+  #rates-view table.rates input[type=number]{width:100%}
 }
 </style>
 </head>
@@ -257,7 +268,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.15d';
+const APP_VER='2026.11.15e';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -557,7 +568,7 @@ function classify(label){
   if(/專師|專科護理|^NP$/i.test(s)) return {kind:'np'};
   if(/醫師/.test(s)) return {kind:'doc'};
   const p=PRODUCTS.find(p=>p.re.test(s)); if(p) return {kind:'prod',pid:p.id};
-  if(/^(備註|說明|電話|床|科別|統計|合計)/.test(s)) return {kind:'skip'};
+  if(/^(備註|說明|電話|床|科別|統計|合計|刪除)/.test(s)) return {kind:'skip'};
   return {kind:'maybe',pid:'x:'+s,label:s};   // 不認得的欄：確定是數字欄才當新品項
 }
 function qty(v){
@@ -581,21 +592,32 @@ function parseDate(v){
   if((m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})$/))) return {y:null,m:+m[1],d:+m[2]};
   return null;
 }
-// rows: [{seq,date,cnt:{pid:n},np,doc}]；tabM＝分頁名稱的月份。年份取該分頁多數列的年份（跨年時加減一年）。
+// rows: [{seq,date,cnt:{pid:n},np,doc}]；tabM＝分頁名稱的月份、tabY＝分頁名稱上的年（民國，封存的「115年9月」才有）。
+// 年份取該分頁多數列的年份（跨年時加減一年）。
 // 月份以該列日期為準：跨月忘了換分頁（11/1 填在 10月分頁）算 11月。沒日期、或日期和分頁差超過一個月（多半打錯）才照分頁月份，後者記進 mismatch 提醒。
-function addRows(acc,rows,tabM){
+// 填了專師或醫師、但沒有任何數量的列不計，序號記進 noQty（那個月的畫面會提醒）
+function addRows(acc,rows,tabM,tabY){
   const yrs={};
   rows.forEach(r=>{ if(r.date&&r.date.y) yrs[r.date.y]=(yrs[r.date.y]||0)+1; });
-  const yTop=Number(Object.keys(yrs).sort((a,b)=>yrs[b]-yrs[a])[0])||new Date().getFullYear();
-  rows.forEach(r=>{
-    const tot=sumVals(r.cnt); if(tot<=0) return;
-    let m=r.date&&r.date.m, y=tabM?yTop:((r.date&&r.date.y)||yTop);
+  const yTop=Number(Object.keys(yrs).sort((a,b)=>yrs[b]-yrs[a])[0])||(tabY?tabY+1911:0)||new Date().getFullYear();
+  const keyOf=r=>{   // 這一列算哪個月；mis＝日期和分頁差超過一個月（暫照分頁月份）
+    let m=r.date&&r.date.m, y=tabM?yTop:((r.date&&r.date.y)||yTop), mis=false;
     const gap=tabM&&m?(m-tabM+12)%12:0;   // 日期比分頁晚幾個月：1＝下個月、11＝上個月
     if(gap===1){ if(m===1) y++; }
     else if(gap===11){ if(m===12) y--; }
-    else if(tabM){ if(gap) acc.mismatch++; m=tabM; }
-    if(!m){ acc.undated+=tot; return; }
-    const key=`${y-1911}-${pad(m)}`;
+    else if(tabM){ if(gap) mis=true; m=tabM; }
+    return m?{key:`${y-1911}-${pad(m)}`,mis}:null;
+  };
+  rows.forEach(r=>{
+    const tot=sumVals(r.cnt);
+    if(tot<=0){
+      if(normName(r.np)||normName(r.doc)){ const k=keyOf(r); if(k) (acc.noQty[k.key]||(acc.noQty[k.key]=[])).push(r.seq!=null&&r.seq!==''?String(r.seq):'?'); }
+      return;
+    }
+    const k=keyOf(r);
+    if(!k){ acc.undated+=tot; return; }
+    if(k.mis) acc.mismatch++;
+    const key=k.key;
     (acc.months[key]||(acc.months[key]={rows:[]})).rows.push({
       n:r.seq!=null&&r.seq!==''?r.seq:'', d:r.date&&r.date.d?`${r.date.m}/${r.date.d}`:'',
       np:normName(r.np), doc:normName(r.doc), it:r.cnt});
@@ -608,13 +630,22 @@ function parseRoster(colA){
   if(colA[i]==='醫師') for(i++;i<colA.length&&colA[i];i++) out.doc.push(colA[i]);
   return out;
 }
+// 分頁名稱：「9月」或封存的「115年9月」（明年起同名月份要重用時，舊的那一頁改成這種名字）
+const tabMonth=t=>{ const m=String(t).match(/^(?:(\d{2,3})年)?(\d{1,2})月$/); return m&&+m[2]>=1&&+m[2]<=12?{m:+m[2],y:m[1]?+m[1]:null}:null; };
+// 封存的分頁名單在試算表隱藏的「封存分頁」A 欄（試算表的「新增下個月」按鈕改名時寫進去）。
+// 這一頁不存在時 Google 會回第一個分頁的 A 欄（序號），對不上格式就當作沒有封存的分頁
+const ARCHIVE_SHEET='封存分頁';
 async function sheetLayout(id){
   const enc=encodeURIComponent, tabs=[...Array(12)].map((_,i)=>`${i+1}月`);
+  const head=t=>gviz(id,`sheet=${enc(t)}&tq=${enc('limit 0')}`).catch(e=>({err:e}));
   // 各分頁只抓表頭。注意：分頁不存在時 Google 不報錯、會默默回「第一個分頁」，抓資料後再用內容去重
-  const [heads,ros]=await Promise.all([
-    Promise.all(tabs.map(t=>gviz(id,`sheet=${enc(t)}&tq=${enc('limit 0')}`).catch(e=>({err:e})))),
+  const [heads,ros,arc]=await Promise.all([
+    Promise.all(tabs.map(head)),
     gviz(id,`sheet=${enc('統計')}&tq=${enc('select A')}`,0).catch(()=>null),
+    gviz(id,`sheet=${enc(ARCHIVE_SHEET)}&tq=${enc('select A')}`,0).catch(()=>null),
   ]);
+  const more=[]; ((arc&&arc.table&&arc.table.rows)||[]).forEach(r=>{ const v=normName(gcell(r.c&&r.c[0])), t=tabMonth(v); if(t&&t.y&&!more.includes(v)) more.push(v); });
+  if(more.length){ tabs.push(...more); heads.push(...await Promise.all(more.map(head))); }
   // 任一分頁表頭讀失敗＝連線問題，整次作廢（略過失敗分頁照做的話，該月內容會被別的分頁的回聲頂替成別的月份）
   const hErr=heads.find(h=>h.err); if(hErr) throw hErr.err;
   const jobs=heads.map((h,i)=>{
@@ -630,7 +661,8 @@ async function sheetLayout(id){
       if(use){ pick.push(c.id); labels.push(normLabel(c.label)); }
     });
     if(!map.np||!map.prod.length) return null;   // 不是使用紀錄分頁
-    return {tab:tabs[i],tabM:i+1,map,pick,labels};
+    const tm=tabMonth(tabs[i]);
+    return {tab:tabs[i],tabM:tm.m,tabY:tm.y,map,pick,labels};
   });
   // 名單：統計頁 A 欄「專師」底下到「醫師」為止是專師，之後到空白為止是醫師
   const rt=ros&&ros.table, colA=[];
@@ -638,29 +670,38 @@ async function sheetLayout(id){
     (rt.rows||[]).forEach(r=>colA.push(normName(gcell(r.c&&r.c[0])))); }
   return {jobs,roster:parseRoster(colA)};
 }
-async function fetchSheet(url){
+// 欄位配置與「哪些分頁真的有資料」記 30 分鐘：期間每分鐘的自動更新只讀有資料的分頁＋這個月、下個月（新開的分頁），
+// 不用每次都讀 12 個分頁的表頭、再把不存在的分頁回的「第一個分頁」整份重抓（原本一次 25 個請求、約 400 KB）。
+// 按「更新」、換試算表、或欄位對不上時整份重讀
+const LAY_TTL=30*60*1000;
+let _lay=null;   // {id,at,lay,real:[分頁名稱]}
+async function fetchSheet(url,full){
   const id=sheetId(url); if(!id) throw new Error('試算表網址格式不對');
-  const enc=encodeURIComponent, lay=await sheetLayout(id), jobs=lay.jobs;
+  const enc=encodeURIComponent, now=Date.now(), quick=!full&&_lay&&_lay.id===id&&now-_lay.at<LAY_TTL;
+  const lay=quick?_lay.lay:await sheetLayout(id);
+  let jobs=lay.jobs;
+  if(quick){ const mo=new Date().getMonth(), want=new Set([..._lay.real,`${mo+1}月`,`${(mo+1)%12+1}月`]); jobs=jobs.map(j=>j&&want.has(j.tab)?j:null); }
   const datas=await Promise.all(jobs.map(j=>j?gviz(id,`sheet=${enc(j.tab)}&tq=${enc('select '+j.pick.join(','))}`).catch(e=>({err:e})):null));
   // 表頭與資料之間有人插欄／搬欄，或某分頁讀失敗 → 整次作廢、保留舊資料（下次再讀）
   const bad=datas.find((d,i)=>jobs[i]&&d&&(d.err||!d.table||d.table.cols.map(c=>normLabel(c.label)).join('|')!==jobs[i].labels.join('|')));
-  if(bad) throw bad.err||new Error('試算表欄位剛好有變動，請再按一次更新');
+  if(bad){ _lay=null; if(quick&&!bad.err) return fetchSheet(url,true); throw bad.err||new Error('試算表欄位剛好有變動，請再按一次更新'); }
   // 同內容的回應只算一次；優先留「分頁月份＝多數列日期月份」的那份（其餘是不存在分頁回的第一頁）
   const groups={};
   datas.forEach((d,i)=>{
     if(!d||!d.table) return;
     const j=jobs[i], idx={}; d.table.cols.forEach((c,ci)=>idx[c.id]=ci);
-    const rows=(d.table.rows||[]).map(r=>{ const c=r.c||[], cnt={};
+    const all=(d.table.rows||[]).map(r=>{ const c=r.c||[], cnt={};
       j.map.prod.forEach(p=>{ const n=qty(gcell(c[idx[p.id]])); if(n) cnt[p.pid]=(cnt[p.pid]||0)+n; });
       return {seq:j.map.seq?gcell(c[idx[j.map.seq]]):null, date:j.map.date?parseDate(gcell(c[idx[j.map.date]])):null, cnt,
               np:gcell(c[idx[j.map.np]]), doc:j.map.doc?gcell(c[idx[j.map.doc]]):null,
-              k:JSON.stringify(c.map(gcell))}; })   // k＝原始儲存格，只用來比對回聲
-      .filter(r=>Object.keys(r.cnt).length);
+              k:JSON.stringify(c.map(gcell))}; });   // k＝原始儲存格，只用來比對回聲
+    const rows=all.filter(r=>Object.keys(r.cnt).length);
+    const blank=all.filter(r=>!Object.keys(r.cnt).length&&(normName(r.np)||normName(r.doc)));   // 填了人、沒填數量
     if(!rows.length) return;
     const ms={}; rows.forEach(r=>{ if(r.date&&r.date.m) ms[r.date.m]=(ms[r.date.m]||0)+1; });
     const domM=Number(Object.keys(ms).sort((a,b)=>ms[b]-ms[a])[0])||null;
     const sig=JSON.stringify(d.table.rows), g=groups[sig];
-    const cand={tabM:j.tabM,domM,rows,extra:j.map.prod.filter(p=>p.label).map(p=>p.label),good:domM===j.tabM,n:(g?g.n:0)+1};
+    const cand={tab:j.tab,tabM:j.tabM,tabY:j.tabY,domM,rows,blank,extra:j.map.prod.filter(p=>p.label).map(p=>p.label),good:domM===j.tabM,n:(g?g.n:0)+1};
     if(!g||(!g.good&&cand.good)) groups[sig]=cand; else g.n=cand.n;
   });
   // 多數列月份和分頁名稱對不上的內容：
@@ -669,7 +710,7 @@ async function fetchSheet(url){
   //  ・好幾個分頁都回這份、又沒有一頁月份對得上 → 無法判斷是哪個月，不計、出提醒
   const gs=Object.values(groups), goodK={};
   gs.forEach(g=>{ if(g.good) g.rows.forEach(r=>goodK[r.k]=(goodK[r.k]||0)+1); });
-  const acc={months:{},extra:{},undated:0,mismatch:0,dropped:0,roster:lay.roster};
+  const acc={months:{},extra:{},undated:0,mismatch:0,dropped:0,noQty:{},roster:lay.roster}, real=[];
   gs.forEach(g=>{
     if(g.domM!=null&&!g.good){
       const left={...goodK}; let hit=0;
@@ -677,17 +718,18 @@ async function fetchSheet(url){
       if(hit>=g.rows.length/2) return;
       if(g.n>1){ acc.dropped+=g.rows.reduce((t,r)=>t+sumVals(r.cnt),0); return; }
     }
-    addRows(acc,g.rows,g.tabM); g.extra.forEach(l=>acc.extra[l]=1);
+    addRows(acc,g.rows.concat(g.blank),g.tabM,g.tabY); g.extra.forEach(l=>acc.extra[l]=1); real.push(g.tab);
   });
+  if(!quick) _lay={id,at:now,lay,real};
   return acc;
 }
 // 備援：試算表改成不公開後，改上傳「檔案→下載→Microsoft Excel」的 xlsx
 function parseWorkbook(wb){
-  const acc={months:{},extra:{},undated:0,mismatch:0,dropped:0,roster:{np:[],doc:[]}};
+  const acc={months:{},extra:{},undated:0,mismatch:0,dropped:0,noQty:{},roster:{np:[],doc:[]}};
   wb.SheetNames.forEach(name=>{
     const aoa=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:null});
     if(/統計/.test(name)){ acc.roster=parseRoster(aoa.map(r=>normName(r&&r[0]))); return; }
-    const mm=name.match(/(\d{1,2})\s*月/), tabM=mm&&+mm[1]>=1&&+mm[1]<=12?+mm[1]:null;
+    const mm=name.match(/(?:(\d{2,3})\s*年\s*)?(\d{1,2})\s*月/), tabM=mm&&+mm[2]>=1&&+mm[2]<=12?+mm[2]:null, tabY=mm&&mm[1]?+mm[1]:null;
     for(let hi=0;hi<Math.min(6,aoa.length);hi++){
       const map={prod:[]};
       (aoa[hi]||[]).forEach((lbl,ci)=>{
@@ -706,7 +748,7 @@ function parseWorkbook(wb){
       const rows=aoa.slice(hi+1).map(r=>{ r=r||[]; const cnt={};
         map.prod.forEach(p=>{ const n=qty(r[p.ci]); if(n) cnt[p.pid]=(cnt[p.pid]||0)+n; });
         return {seq:map.seq!=null?r[map.seq]:null,date:map.date!=null?parseDate(r[map.date]):null,cnt,np:r[map.np],doc:map.doc!=null?r[map.doc]:null}; });
-      addRows(acc,rows,tabM);
+      addRows(acc,rows,tabM,tabY);
       map.prod.forEach(p=>{ if(p.label) acc.extra[p.label]=1; });
       break;
     }
@@ -730,20 +772,21 @@ function mergeResult(acc,source){
   Object.assign(D.extra,acc.extra); pruneExtra(D);
   const changed=JSON.stringify([D.months,D.roster,D.extra])!==before, now=new Date().toISOString();
   D.checked=now; if(changed||!D.changed) D.changed=now;
-  D.source=source; D.warn={undated:acc.undated,mismatch:acc.mismatch,dropped:acc.dropped||0};
+  D.source=source; D.warn={undated:acc.undated,mismatch:acc.mismatch,dropped:acc.dropped||0,noQty:acc.noQty||{}};
   saveState(true);
   const dl=[...new Set([...Object.keys(cntBefore),...Object.keys(D.months)])].sort().map(k=>{
     const d=cnt(k)-(cntBefore[k]||0); return d?`${Number(k.split('-')[1])}月 ${d>0?'+':''}${d} 件`:''; }).filter(Boolean).join('、');
   return {changed,delta:dl};
 }
-async function refresh(silent){
-  if(busy) return;
+let _refreshAgain=false;
+async function refresh(silent,full){
+  if(busy){ _refreshAgain=true; return; }   // 正在讀：讀完再讀一次（例如剛換了試算表網址）
   if(VIEW&&!sheetUrl()){ loadView(); return; }
   const url=sheetUrl();
   if(!url){ if(!silent){ $('card-cfg').open=true; alert('還沒設定試算表網址，請到最下方「其他設定」貼上。'); } renderStatus(); return; }
   busy=true; renderStatus();
   try{
-    const r=mergeResult(await fetchSheet(url),'sheet');
+    const r=mergeResult(await fetchSheet(url,full||!silent),'sheet');   // 按「更新」＝整份重讀；自動的只讀有資料的分頁
     fail=null; if(r.delta) delta={txt:r.delta,at:Date.now()};
     busy=false;
     loadSched();
@@ -753,6 +796,7 @@ async function refresh(silent){
     busy=false; fail={at:new Date().toISOString(),msg:(e&&e.message)||String(e)};
     renderStatus(); if(!silent) alert('讀取試算表失敗：'+fail.msg+'\n\n畫面上保留的是上次讀到的資料。');
   }
+  if(_refreshAgain){ _refreshAgain=false; setTimeout(()=>refresh(true),100); }
 }
 
 // ---------- 畫面 ----------
@@ -786,9 +830,9 @@ function renderMonthBar(ks,statOf,legend){
   const bar=$('monthbar'), pk=$('mpick'); _mbKeys=ks;
   if(!ks.length||!cur){ bar.style.display='none'; pk.classList.remove('on'); pickOpen=false; return; }
   bar.style.display='';
-  const i=ks.indexOf(cur);
+  const i=ks.indexOf(cur), dot=k=>{ const s=statOf(k); return s?`<i class="${s}"></i>`:''; };   // 沒有狀態（醫師個人頁不逐月確認）就不畫圓點
   bar.innerHTML=`<button class="mb-nav" data-act="mstep" data-d="-1" aria-label="上個月"${i>0?'':' disabled'}>‹</button>
-    <button class="mb-cur" data-act="mpick"><span>📅</span>${keyLabel(cur)}<i class="${statOf(cur)}"></i></button>
+    <button class="mb-cur" data-act="mpick"><span>📅</span>${keyLabel(cur)}${dot(cur)}</button>
     <button class="mb-nav" data-act="mstep" data-d="1" aria-label="下個月"${i<ks.length-1?'':' disabled'}>›</button>`;
   if(!pickOpen){ pk.classList.remove('on'); return; }
   const years=[...new Set(ks.map(k=>+k.split('-')[0]))];
@@ -796,8 +840,8 @@ function renderMonthBar(ks,statOf,legend){
   const yi=years.indexOf(pickYear), now=todayKey();
   pk.innerHTML=`<div class="box"><div class="yr"><button class="mb-nav" data-act="myear" data-d="-1"${yi>0?'':' disabled'}>‹</button><b>${pickYear}年</b><button class="mb-nav" data-act="myear" data-d="1"${yi<years.length-1?'':' disabled'}>›</button></div>
     <div class="grid">${[...Array(12)].map((_,j)=>{ const k=`${pickYear}-${pad(j+1)}`, has=ks.includes(k);
-      return `<button class="m${k===cur?' on':''}${k===now?' now':''}" ${has?`data-act="month" data-k="${k}"`:'disabled'}>${j+1}月${has?`<i class="${statOf(k)}"></i>`:''}</button>`; }).join('')}</div>
-    <div class="lg">${legend}</div></div>`;
+      return `<button class="m${k===cur?' on':''}${k===now?' now':''}" ${has?`data-act="month" data-k="${k}"`:'disabled'}>${j+1}月${has?dot(k):''}</button>`; }).join('')}</div>
+    ${legend?`<div class="lg">${legend}</div>`:''}</div>`;
   pk.classList.add('on');
 }
 function switchMonth(k){
@@ -848,6 +892,8 @@ function monthWarnings(c,list){
   if(sw.mismatch) w.push(`試算表有 ${sw.mismatch} 筆的日期和所在分頁差超過一個月，可能打錯（暫依分頁月份計）。`);
   if(sw.undated) w.push(`試算表有 ${sw.undated} 件沒有日期也不在月份分頁、未計入。`);
   if(sw.dropped) w.push(`試算表有 ${sw.dropped} 件無法判斷屬於哪個月、未計入，請檢查第一個分頁的日期。`);
+  const nq=(sw.noQty||{})[c.key];
+  if(nq&&nq.length) w.push(`有 ${nq.length} 筆填了專師或醫師、但沒有填數量，沒有算進來（序 ${nq.join('、')}）——請回試算表補上數量，或把那一列刪掉。`);
   return w;
 }
 // 還沒有任何月份資料時顯示：有網址→等讀取；沒網址→請輸入同步密碼（別台設定過）或貼網址（第一次）
@@ -864,11 +910,8 @@ function setupHtml(){
   // 這一頁（index.html）是主任用的，所以主任的登入放最上面；專師平常走自己的個人連結（me.html），這裡只留備用入口
   let savedMe=false; try{ savedMe=!!localStorage.getItem(LS_ME); }catch(e){}
   return `<div class="card"><div class="setup"><h2>主任：看全部人的點數</h2>
-    <div class="hint">輸入<b>同步密碼</b>，這台裝置就會載入全部人的資料。</div>
-    <div class="row"><input type="password" id="setup-pw" placeholder="同步密碼" autocomplete="off" style="flex:1;min-width:180px"><button class="btn" data-act="sync-on" data-src="setup-pw">載入全部資料</button></div>
-    <div class="hint" style="margin-top:10px">從來沒設定過的話：到最下方「其他設定」貼上試算表網址。</div></div></div>
+    <div class="row"><input type="password" id="setup-pw" placeholder="同步密碼" autocomplete="off" style="flex:1;min-width:180px"><button class="btn" data-act="sync-on" data-src="setup-pw">載入全部資料</button></div></div></div>
     <div class="card"><div class="setup"><h2 style="font-size:15px;color:var(--mut)">專師：只看自己的點數</h2>
-    <div class="hint">請打開主任傳給你的個人連結；或把那條連結貼在這裡。</div>
     <div class="row"><input type="text" id="me-link" placeholder="貼上個人連結" autocomplete="off" style="flex:1;min-width:180px"><button class="btn outline" data-act="me-paste">開啟</button>
       ${savedMe?'<button class="btn outline" data-act="me-open">開啟我的點數</button>':''}</div></div></div>`;
 }
@@ -931,7 +974,7 @@ function renderMonth(){
     `<td class="n sub" data-l="品項總點數">${fmt(p.sales)}</td><td class="n sub" data-l="上班">${hh==null?'—':hh+'<span class="hru"> 小時</span>'}</td><td class="n sub" data-l="每小時">${phTxt(p.sales,hh)}</td></tr>`;
   const docMix=mixHtml(docs.filter(p=>p.amt>0).map(p=>({label:p.name||'（未填醫師）',note:sumVals(p.it)+' 件',v:p.amt,c:personColor('d',p.name)})));
   const npMix=mixHtml(nps.filter(p=>p.amt>0).map(p=>({label:p.name||'（未填專師）',note:'主要 '+sumVals(p.it)+' 件',v:p.amt,c:personColor('n',p.name)})));
-  h+=sec('d','醫師點數',dTot,'',`<div class="sec-head"><div class="hint">點姓名可看逐筆明細。上班時數讀自急診醫師班表${cur===todayKey()?'（這個月算到今天）':''}，不含支援其他單位的班；每小時＝品項總點數 ÷ 上班時數。${schedHrs&&schedHrs.m[cur]?'':'<b>目前還沒讀到班表。</b>'}</div></div>
+  h+=sec('d','醫師點數',dTot,'',`${schedHrs&&schedHrs.m[cur]?'':'<div class="note warn">目前還沒讀到班表，上班時數與每小時是空的。</div>'}
     ${docMix?`<div class="mixh">各醫師的占比</div>${docMix}<div class="mixh" style="margin-top:12px">明細</div>`:''}
     <div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th>品項總點數</th><th>上班時數</th><th>每小時品項總點數</th></tr></thead><tbody>`+
     (dList.length?dList.map(drow).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
@@ -940,25 +983,22 @@ function renderMonth(){
   const cums=Object.values(docCumAll()).filter(x=>x.total||x.recs.length).sort((a,b)=>b.left-a.left||a.name.localeCompare(b.name,'zh-Hant'));
   const cT=f=>cums.reduce((t,x)=>t+x[f],0);
   h+=`<details class="card sec" data-sec="led"${isOpen('led')?' open':''}><summary><span>醫師累積點數</span><span class="sum-amt">尚未確認 ${fmt(cT('left'))} 點</span>${cT('can')?`<span class="tag no">可確認 ${fmt(cT('can'))}</span>`:''}</summary>
-    <div class="sec-head"><div class="hint">醫師的點數不逐月確認：全部月份累積起來，以 ${fmt(LED_UNIT)} 點為一單位，有確認時按「記一筆」；沒滿 ${fmt(LED_UNIT)} 的留到下次。這張表不分月份。</div></div>
     <div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th><th>累積點數</th><th>已確認</th><th>尚未確認</th><th>可確認</th><th class="l"></th></tr></thead><tbody>`+
     (cums.map(x=>`<tr><td class="l nmc"><b>${esc(x.name)}</b></td><td class="n sub" data-l="累積">${fmt(x.total)}</td><td class="n sub" data-l="已確認">${fmt(x.paid)}</td><td class="amt">${fmt(x.left)}</td><td class="n sub" data-l="可確認">${fmt(x.can)}</td>`+
       `<td class="st"><button class="btn mini${x.can?'':' ghost'}" data-act="led" data-k="${esc(x.pk)}">${x.can?'記一筆':'看紀錄'}</button></td></tr>`).join('')||'<tr><td class="l mut" colspan="6">還沒有紀錄</td></tr>')+
     (cums.length?`<tr class="tot"><td class="l nmc">合計</td><td class="n sub" data-l="累積">${fmt(cT('total'))}</td><td class="n sub" data-l="已確認">${fmt(cT('paid'))}</td><td class="amt">${fmt(cT('left'))}</td><td class="n sub" data-l="可確認">${fmt(cT('can'))}</td><td class="st"></td></tr>`:'')+
     `</tbody></table></div></details>`;
   // 專師
-  h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`<div class="sec-head"><div class="hint">件數＝本人為主要的件數。平分：本月平分池 ${fmt(c.pool)} 點 ÷ ${c.cfg.sharers.length} 位＝每人 ${fmt(c.share)} 點（主要的人自己也分得到）。</div>${allBtn('n','專師')}</div>
+  h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`${allBtn('n','專師')?`<div class="sec-head">${allBtn('n','專師')}</div>`:''}
     ${npMix?`<div class="mixh">各專師的占比</div>${npMix}<div class="mixh" style="margin-top:12px">明細</div>`:''}
     <div class="tw"><table class="ppl"><thead><tr><th class="l">專師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>主要點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
     (nps.length?nps.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="n sub" data-l="主要">${fmt(p.promo)}</td><td class="n sub" data-l="＋平分">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
-    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="n sub" data-l="主要">${fmt(promoTot)}</td><td class="n sub" data-l="＋平分">${fmt(nTot-promoTot)}</td><td class="amt">${fmt(nTot)}</td><td class="st"></td></tr></tbody></table></div>
-    <div class="sub2">本月計算方式——${esc(rateText(c.cfg,pids.length?pids:PRODUCTS.map(p=>p.id)))}。</div>`);
+    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="n sub" data-l="主要">${fmt(promoTot)}</td><td class="n sub" data-l="＋平分">${fmt(nTot-promoTot)}</td><td class="amt">${fmt(nTot)}</td><td class="st"></td></tr></tbody></table></div>`);
   // 科部（不屬於個人的部分）
   if(fp){
     const fpids=pids.filter(pid=>fp.it[pid]);
     h+=sec('f','科部',fp.amt,fp.rec&&fp.rec.amt>=fp.amt?'<span class="tag ok">✓ 已確認</span>':'<span class="tag no">未確認</span>',
-    `<div class="sec-head"><div class="hint">不屬於醫師或專師個人的部分${c.poolLeft?`（含專師平分除不盡的 ${fmt(c.poolLeft)} 點）`:''}。歸入科部後按「確認」。</div></div>
-    <div class="tw"><table class="ppl"><thead><tr><th class="l">項目</th>${fpids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th class="l">確認</th></tr></thead><tbody>
+    `<div class="tw"><table class="ppl"><thead><tr><th class="l">項目</th>${fpids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th class="l">確認</th></tr></thead><tbody>
     <tr class="${fp.rec&&fp.rec.amt===fp.amt?'paid':''}"><td class="l nmc"><b>科部</b></td>${fpids.map(pid=>qtd(fp.it[pid],pid)).join('')}<td class="amt">${fmt(fp.amt)}</td><td class="st">${payCell(fp)}</td></tr></tbody></table></div>`);
   }
   el.innerHTML=h;
@@ -989,8 +1029,7 @@ function renderYear(){
   };
   const gDue=mks.reduce((s,k)=>s+colTot[k].due,0), gOwe=mks.reduce((s,k)=>s+colTot[k].owe,0);
   el.innerHTML=(years.length>1?`<div class="row" style="margin:0 0 10px">年度 <select data-act="year">${years.map(y=>`<option${y===yearSel?' selected':''}>${y}</option>`).join('')}</select></div>`:'')+
-    `<div class="hint">綠色 ✓＝已確認；紅色＝還沒確認；⚠＝確認之後試算表又有變動、點數對不上。醫師不逐月確認，看當月畫面的「醫師累積點數」。</div>
-    <div class="tw"><table><thead><tr><th class="l">${yearSel}年</th>${mks.map(k=>`<th>${Number(k.split('-')[1])}月</th>`).join('')}<th>合計</th><th>還沒確認</th></tr></thead><tbody>`+
+    `<div class="tw"><table><thead><tr><th class="l">${yearSel}年</th>${mks.map(k=>`<th>${Number(k.split('-')[1])}月</th>`).join('')}<th>合計</th><th>還沒確認</th></tr></thead><tbody>`+
     sect('d','醫師')+sect('n','專師')+sect('f','科部')+
     `<tr class="tot"><td class="l">合計</td>${mks.map(k=>`<td class="n">${fmt(colTot[k].due)}</td>`).join('')}<td class="amt">${fmt(gDue)}</td><td class="n">${fmt(gOwe)}</td></tr></tbody></table></div>`;
 }
@@ -1008,7 +1047,7 @@ function draftRates(){   // 這個月的點數套上草稿：表格右邊的試�
 }
 function renderRateSave(){
   const el=$('rates-save'); if(!el) return;
-  el.innerHTML=draftDirty()&&cur?`<div class="note warn" style="margin:10px 0 0"><b>有還沒儲存的修改。</b>按「儲存」後從 ${keyLabel(cur)} 起適用（之後沒有另外修改的月份也跟著）；在那之前，下面的點數和專師個人頁看到的都還是原本的數字。
+  el.innerHTML=draftDirty()&&cur?`<div class="note warn" style="margin:10px 0 0"><b>有還沒儲存的修改。</b>
     <div class="row"><button class="btn" data-act="rate-save">儲存</button><button class="btn outline" data-act="rate-cancel">取消修改</button></div></div>`:'';
 }
 function renderRates(){
@@ -1022,17 +1061,16 @@ function renderRates(){
       :`${keyLabel(cur)}目前<b>沿用${lab(src)}</b>，沒有另外修改。`;
     $('card-rates').querySelector('summary').textContent='✏ 每件點數'+(cur?'（'+keyLabel(cur)+'）':'');
     el.innerHTML=`<div class="note info" style="margin:0 0 10px">${from}</div>
-    <div class="hint">每個月的點數可以不一樣：在想改的那個月把白色格子改好，<b>按「儲存」才會生效</b>。儲存後從那個月起適用，之後沒有另外修改的月份會跟著沿用，之前的月份不受影響。<br>
-      「品項點數」只用來算品項總點數，「原始點數」只用來算原始總點數、總點數差與折讓點數，這兩欄都不影響每個人的點數；「科部」是不屬於個人的部分。右邊三欄是自動加總，用來核對。</div>
-    <div class="tw"><table><thead><tr><th class="l">品項</th><th class="l">廠牌</th><th>品項點數</th><th>原始點數</th><th>醫師</th><th>主要</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
+    <div class="tw"><table class="rates"><thead><tr><th class="l">品項</th><th class="l">廠牌</th><th>品項點數</th><th>原始點數</th><th>醫師</th><th>主要</th><th>其餘專師平分</th><th>科部</th><th>平分每人（÷<span class="cfg-n">${N}</span> 位）</th><th>專師合計</th><th>每件總點數</th></tr></thead><tbody>`+
     productList().map(p=>{ const r=rates[p.id], d=rateDerived(r), id=esc(p.id);
-      const dr=rateDraft[p.id]||{};
-      const inp=f=>`<td><input type="number" min="0" step="10" value="${f in dr?esc(dr[f]):saved[p.id][f]}"${f in dr?' class="chg"':''} data-act="rate" data-pid="${id}" data-f="${f}"></td>`;
-      return `<tr data-row="${id}"><td class="l"><b>${esc(p.name)}</b></td><td class="l">${brandCell(p.id)}</td>${inp('price')}${inp('cost')}${inp('doc')}${inp('promo')}${inp('pool')}${inp('fund')}<td class="n" data-c="each">${N?fmt2(r.pool/N):'—'}</td><td class="n" data-c="np">${fmt(d.np)}</td><td class="amt" data-c="all">${fmt(d.all)}</td></tr>`; }).join('')+
+      const dr=rateDraft[p.id]||{}, LB={price:'品項點數',cost:'原始點數',doc:'醫師',promo:'主要',pool:'其餘專師平分',fund:'科部'};
+      const inp=f=>`<td class="in" data-l="${LB[f]}"><input type="number" min="0" step="10" value="${f in dr?esc(dr[f]):saved[p.id][f]}"${f in dr?' class="chg"':''} data-act="rate" data-pid="${id}" data-f="${f}"></td>`;
+      return `<tr data-row="${id}"><td class="l rn"><b>${esc(p.name)}</b></td><td class="l rb">${brandCell(p.id)}</td>${inp('price')}${inp('cost')}${inp('doc')}${inp('promo')}${inp('pool')}${inp('fund')}`+
+        `<td class="n rc" data-l="平分每人" data-c="each">${N?fmt2(r.pool/N):'—'}</td><td class="n rc" data-l="專師合計" data-c="np">${fmt(d.np)}</td><td class="amt rc" data-l="每件總點數" data-c="all">${fmt(d.all)}</td></tr>`; }).join('')+
     `</tbody></table></div>
     <div id="rates-save"></div>
     <div id="rates-note"></div>
-    <h3>專師平分名單（目前 <span class="cfg-n">${N}</span> 位，「其餘專師平分」的點數由這些人均分，主要的人自己也分得到）</h3>
+    <h3>專師平分名單（<span class="cfg-n">${N}</span> 位）</h3>
     <div class="chips">${sh.map(n=>`<span class="chip">${esc(n)}<button title="移出名單" data-act="sharer-del" data-n="${esc(n)}">×</button></span>`).join('')||'<span class="mut">（空的）</span>'}</div>
     <div class="row"><input type="text" id="sharer-new" placeholder="新增姓名" style="width:130px"><button class="btn mini outline" data-act="sharer-add">＋加入</button>
       ${auto?'<span class="mut" style="font-size:12.5px">目前跟著試算表「統計」頁的專師名單</span>':'<button class="btn mini ghost" data-act="sharer-reset">↺ 改回跟著試算表統計頁名單</button>'}</div>`;
@@ -1072,27 +1110,22 @@ function renderCfg(){
     <h3>個人查看連結（專師只看得到自己的點數）</h3>${viewsHtml()}
     <h3>單筆通知</h3>${bigCfgHtml()}
     <h3>試算表</h3>
-    <div class="row"><input type="url" id="cfg-url" style="flex:1;min-width:260px" placeholder="https://docs.google.com/spreadsheets/d/…" value="${esc(sheetUrl())}"><button class="btn mini outline" data-act="url-save">儲存並更新</button></div>
-    <div class="hint" style="margin-top:6px">只讀取 序／日期／各品項數量／專師／醫師 欄，其他欄位不會下載。試算表若改成不公開，可改用
-      <label style="color:var(--navy);cursor:pointer;text-decoration:underline">上傳下載的 xlsx<input type="file" accept=".xlsx" style="display:none" data-act="upload"></label>（Google 試算表：檔案 → 下載 → Microsoft Excel）。</div>
+    <div class="row"><input type="url" id="cfg-url" style="flex:1;min-width:260px" placeholder="https://docs.google.com/spreadsheets/d/…" value="${esc(sheetUrl())}"><button class="btn mini outline" data-act="url-save">儲存並更新</button>
+      <label class="btn mini outline">⬆ 上傳下載的 xlsx<input type="file" accept=".xlsx" style="display:none" data-act="upload"></label></div>
     <h3>備份</h3>
     <div class="row"><button class="btn mini outline" data-act="backup-export">⬇ 匯出備份檔</button>
-      <label class="btn mini outline">⬆ 匯入備份檔<input type="file" accept=".json" style="display:none" data-act="backup-import"></label>
-      <span class="mut" style="font-size:12.5px">沒開雲端同步時，確認註記只存在這台裝置的瀏覽器裡，建議每次確認完匯出一份。</span></div>
+      <label class="btn mini outline">⬆ 匯入備份檔<input type="file" accept=".json" style="display:none" data-act="backup-import"></label></div>
     <h3>版本</h3>
     <div class="row"><span class="mut">目前版本 ${APP_VER}</span><button class="btn mini ghost" data-act="force-update">強制更新到最新版</button></div>`;
 }
 function syncHtml(){
   if(!window.crypto||!crypto.subtle) return '<div class="hint">這個瀏覽器不支援加密功能，無法使用雲端同步。</div>';
-  if(!sync) return `<div class="hint">開啟後，點數、平分名單、試算表網址、確認註記會在您的各台裝置之間同步。上傳前先用下面的「同步密碼」加密，雲端上只有亂碼；
-      密碼不會被儲存或上傳，<b>忘記就解不開</b>，請自己記好。每台裝置輸入一次即可。</div>
-    <div class="row"><input type="password" id="sync-pw" placeholder="同步密碼（至少 10 個字，英文＋數字）" autocomplete="off" style="width:280px"><button class="btn mini" data-act="sync-on" data-src="sync-pw">開啟同步</button></div>`;
+  if(!sync) return `<div class="row"><input type="password" id="sync-pw" placeholder="同步密碼（至少 10 個字，英文＋數字）" autocomplete="off" style="width:280px"><button class="btn mini" data-act="sync-on" data-src="sync-pw">開啟同步</button></div>`;
   const k=syncSt.k, tag=k==='ok'?`<span class="tag ok">✓ 已同步 ${hm(new Date(syncSt.at).toISOString())}</span>`
     :k==='denied'?'<span class="tag no">雲端尚未開通</span>':k==='offline'?'<span class="tag no">離線中，連上網路後自動同步</span>'
     :k==='error'?`<span class="tag no">同步失敗：${esc(syncSt.msg)}</span>`:'<span class="mut">同步中…</span>';
   let h=`<div class="row">${tag}<button class="btn mini outline" data-act="sync-now">立即同步</button><button class="btn mini ghost" data-act="sync-off">在這台裝置關閉同步</button></div>
-    <div class="row"><input type="password" id="sync-newpw" placeholder="新的同步密碼（至少 10 個字，英文＋數字）" autocomplete="new-password" style="width:300px"><button class="btn mini outline" data-act="sync-chpw" data-src="sync-newpw">更換同步密碼</button></div>
-    <div class="hint" style="margin-top:4px">更換後舊密碼立刻作廢；還在用舊密碼的裝置下次開啟時，上面的資料會被清掉，要輸入新密碼才載得回來。個人查看連結不受影響。</div>`;
+    <div class="row"><input type="password" id="sync-newpw" placeholder="新的同步密碼（至少 10 個字，英文＋數字）" autocomplete="new-password" style="width:300px"><button class="btn mini outline" data-act="sync-chpw" data-src="sync-newpw">更換同步密碼</button></div>`;
   if(k==='denied') h+=`<div class="note warn" style="margin-top:10px">雲端資料庫還沒允許這個 App 存取（只需要做一次）。請到
       <a href="https://console.firebase.google.com/project/tenchener-488d2/database/tenchener-488d2-default-rtdb/rules" target="_blank" rel="noopener">Firebase 主控台 → Realtime Database →「規則」</a>，
       在 <code>"rules": {</code> 這一行的<b>正下方</b>貼上這一段（放最前面，結尾的逗號才會對），然後按「發布」。開通後這裡會自動開始同步。<pre class="rule">"erCommissionData": {
@@ -1281,11 +1314,11 @@ function projHtml(m,key){
 function cumHtml(m){
   if(!CUM[m]||!cur||!state.data.months[cur]) return '';
   const {ds,cum,cum2,legend,daily}=CUM[m](cur), pts=[]; for(let d=1;d<=ds.D;d++) pts.push(cum2?{k:d,v:cum[d],v2:cum2[d]}:{k:d,v:cum[d]});
-  const notes=[]; if(ds.isNow) notes.push('這個月還沒過完，畫到今天（橘色那一點）');
+  const notes=[];   // 只在資料有狀況時才出現
   if(ds.odd) notes.push(`有 ${ds.odd} 筆沒有日期（或日期不在這個月），算在 1 日`); if(ds.late) notes.push(`有 ${ds.late} 筆的日期在今天之後，沒有畫進來`);
   return `<div class="cumh">${keyLabel(cur)}・逐日累進<small>${ds.mm}月1日～${ds.D}日</small></div>${lineSvg(pts,ds.isNow?ds.D:-1,ds.mm)}`+
     (cum2?`<div class="lg2"><span><i></i>${legend[0]}</span><span><i class="d"></i>${legend[1]}</span></div>`:'')+
-    `<div class="sub2" style="margin-top:0">從 1 日起每天累計到多少；換月份（最下面那一條）再點進來，就是那個月的。${notes.length?notes.join('；')+'。':''}</div>`+
+    (notes.length?`<div class="sub2" style="margin-top:0">${notes.join('；')}。</div>`:'')+
     (daily?(()=>{ const dp=[]; let mx=1;   // 每天各增加多少；最高的那一天標出數字
       for(let d=1;d<=ds.D;d++){ dp.push({k:d,v:ds.sum[d]}); if(ds.sum[d]>ds.sum[mx]) mx=d; }
       if(ds.sum[mx]>0) dp[mx-1].lab=1;
@@ -1312,8 +1345,7 @@ function showTrend(m){
       const gx=m==='vendor'&&!VIEW&&brandList().length?brandParts(bvOf(p.k)):null;   // 總點數：每個月的值下面列各廠牌各多少
       const itx=p.e&&m!=='diff'&&m!=='rebate'?itTxt(p.k):'';
       return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${itx?`<div class="estit">推估件數：${itx}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}${gx?`<div class="estit gsub">${gx.map(x=>`${esc(x.name)} ${fmt(x.v)}`).join('<br>')}</div>`:''}</td><td class="n">${d==null?'—':pctHtml(d)+(sp?'<span class="est">同期</span>':'')}</td></tr>`; }).join('')+
-    `</tbody></table></div>
-    <div class="sub2">每個月一個點；橘色是目前正在看的月份。${MTD[m]?'這個月還沒過完，所以它的「較上月」比的是上個月同期（1 日到同一天），標「同期」。':'這個月還沒過完時，數字會比完整的月份低。'}</div>`+
+    `</tbody></table></div>`+
     (anyH?`<div class="sub2">${T.est?'標「推估」的月份沒有逐筆紀錄：是拿當時報表上的原始總點數，用各品項的原始點數反推件數，再換算出來的，只能當參考（圖上是空心點、虛線）。':'標「報表」的月份是試算表開始記錄以前的，用的是當時報表上的數字。'}</div>`:
      T.hist&&!VIEW?'<div class="sub2">試算表開始記錄以前的月份還沒帶進這台裝置：在電腦上開一次本機版，確認頁尾顯示「☁ 已同步」，這裡就會出現。</div>':'');
   $('mask').classList.add('on');
@@ -1324,7 +1356,7 @@ function showToday(){
   if(VIEW) return showTodayMine();
   const t=todayInfo(), [y,m]=t.key.split('-').map(Number), day=t.md.split('/')[1];
   $('dlg').innerHTML=`<h2>今日明細（${y}年${m}月${day}日）<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    <div class="hint">今天新增 ${t.rows.length} 筆、${t.units} 件，品項總點數 ${fmt(t.sales)} 點。「序」對應試算表該分頁的序號。</div>
+    <div class="hint">今天新增 ${t.rows.length} 筆、${t.units} 件，品項總點數 ${fmt(t.sales)} 點。</div>
     <div class="tw"><table><thead><tr><th>序</th><th class="l">品項 × 數量</th><th class="l">醫師</th><th class="l">主要</th><th>品項點數</th></tr></thead><tbody>`+
     (t.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td>`+
       `<td class="l">${esc(r.doc)||'<span style="color:var(--bad)">未填</span>'}</td><td class="l">${esc(r.np)||'<span style="color:var(--bad)">未填</span>'}</td><td class="n">${fmt(t.each[i])}</td></tr>`).join('')||
@@ -1353,7 +1385,7 @@ function showDetail(pk){
   const rows=c.rows.filter(r=>r[f]===name), p=people(c).find(x=>x.pk===pk)||{amt:0,promo:0,share:0};
   const each=r=>Object.keys(r.it).reduce((s,pid)=>s+r.it[pid]*((c.cfg.products[pid]||ZERO)[role==='d'?'doc':'promo']),0);
   $('dlg').innerHTML=`<h2>${esc(name||'（未填姓名）')}・${keyLabel(cur)}${role==='d'?'醫師點數':'專師主要'}明細<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    <div class="hint">${rows.length} 筆，${role==='d'?`點數合計 ${fmt(p.amt)}`:`主要點數 ${fmt(p.promo)}＋平分 ${fmt(p.share)}＝${fmt(p.amt)}`}。「序」對應試算表該分頁的序號。</div>
+    <div class="hint">${rows.length} 筆，${role==='d'?`點數合計 ${fmt(p.amt)}`:`主要點數 ${fmt(p.promo)}＋平分 ${fmt(p.share)}＝${fmt(p.amt)}`}。</div>
     <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">${role==='d'?'主要專師':'醫師'}</th><th>${role==='d'?'點數':'主要點數'}</th></tr></thead><tbody>`+
     (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(role==='d'?r.np:r.doc)||'<span style="color:var(--bad)">未填</span>'}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
      '<tr><td class="l mut" colspan="5">沒有本人為主要的紀錄（只有平分）</td></tr>')+'</tbody></table></div>';
@@ -1445,10 +1477,10 @@ function bigCheck(){
 function bigAck(){ const st=bigState(); bigNew.forEach(x=>{ st.seen[x.id]=1; }); bigSave(st); bigNew=[]; renderAll(); }
 // 這台裝置能不能跳出系統通知
 function bigPermHtml(){
-  if(!('Notification' in window)) return '<span class="mut" style="font-size:12.5px">這台裝置的瀏覽器不能跳出通知（iPhone 要先「加入主畫面」、從主畫面的圖示打開才行），祝賀仍會出現在畫面最上面。</span>';
+  if(!('Notification' in window)) return '<span class="tag no">這台裝置不能跳出通知</span>';
   const pm=Notification.permission;
   return pm==='granted'?'<span class="tag ok">✓ 這台裝置已允許跳出通知</span>'
-    :pm==='denied'?'<span class="tag no">這台裝置封鎖了通知</span> <span class="mut" style="font-size:12.5px">要到手機或瀏覽器的設定裡，把這個網站的通知打開。</span>'
+    :pm==='denied'?'<span class="tag no">這台裝置封鎖了通知</span>'
     :'<button class="btn mini" data-act="big-perm">允許這台裝置跳出通知</button>';
 }
 // 主任頁「其他設定」裡的那一段
@@ -1457,9 +1489,7 @@ function bigCfgHtml(){
   return `<div class="row"><label style="cursor:pointer"><input type="checkbox" data-act="big-on"${b.on?' checked':''}> 發通知</label>
       <span>單筆品項點數達</span><input type="number" id="big-min" inputmode="numeric" min="0" step="500" value="${Number(b.min)||0}" style="width:100px"><span>點以上</span>
       <button class="btn mini outline" data-act="big-save">儲存</button></div>
-    <div class="row" style="margin-top:6px">${bigPermHtml()}</div>
-    <div class="hint" style="margin-top:6px">試算表有一筆（一列）的品項點數達到這個數字時，所有人的 App 最上面會出現「賀 主要專師X醫師，品項×數量」；允許跳出通知的裝置，當天的新紀錄還會另外跳一則通知。
-      <b>要 App 開著（或再打開）時才收得到，App 完全關掉時手機不會響。</b>專師、醫師可以在自己的頁面關掉。</div>`;
+    <div class="row" style="margin-top:6px">${bigPermHtml()}</div>`;
 }
 // 專師、醫師個人頁最下面的那張卡
 function bigMeHtml(){
@@ -1467,8 +1497,7 @@ function bigMeHtml(){
   const st=bigState();
   return `<div class="card"><h2>🔔 單筆通知</h2>
     <div class="row" style="margin:6px 0 0"><label style="cursor:pointer"><input type="checkbox" data-act="big-local"${st.off?'':' checked'}> 有人單筆達 ${fmt(b.min)} 點以上時通知我</label></div>
-    ${st.off?'':`<div class="row" style="margin-top:6px">${bigPermHtml()}</div>`}
-    <div class="sub2">App 開著（或再打開）時，最上面會出現祝賀；App 完全關掉時手機不會響。</div></div>`;
+    ${st.off?'':`<div class="row" style="margin-top:6px">${bigPermHtml()}</div>`}</div>`;
 }
 // 帶進個人連結的內容：要不要發、門檻、各品項的品項點數（個人頁要靠它判斷哪一筆達標）
 function bigBlob(){ const b=state.cfg.big||{}, r=ratesFor(todayKey()), pr={}; Object.keys(r).forEach(pid=>{ if(r[pid].price) pr[pid]=r[pid].price; }); return {on:!!b.on,min:Number(b.min)||0,p:pr}; }
@@ -1499,7 +1528,6 @@ function showLed(pk){
     <div class="row" style="margin:6px 0"><input type="number" id="led-amt" inputmode="numeric" min="0" step="${LED_UNIT}" value="${x.can||''}" style="width:110px"> 點
       <input type="date" id="led-at" value="${today()}"><input type="text" id="led-note" placeholder="備註（可不填）" autocomplete="off" style="flex:1;min-width:120px">
       <button class="btn" data-act="led-add" data-k="${k}">儲存</button></div>
-    <div class="sub2" style="margin-top:0">以 ${fmt(LED_UNIT)} 點為一單位，不必每個月確認；沒確認完的留到下次。</div>
     <div class="cumh">確認紀錄</div>
     <div class="tw"><table><thead><tr><th class="l">日期</th><th>點數</th><th class="l">備註</th><th></th></tr></thead><tbody>`+
     (x.recs.slice().reverse().map(r=>`<tr><td class="l">${esc(r.at)}</td><td class="n">${fmt(r.amt)}</td><td class="l" style="white-space:normal">${esc(r.note)}</td><td class="n"><button class="btn mini ghost" data-act="led-del" data-k="${k}" data-id="${esc(r.id)}">刪除</button></td></tr>`).join('')||
@@ -1543,7 +1571,7 @@ const FB_API_KEY='AIzaSyB6w2D8gaqSBHoDmtWsWGWGY-DQtDEcyFY';   // Firebase Web AP
 const LS_SYNC='erCommission_sync', LS_RT='erCommission_fbrt';
 let sync=null; if(!VIEW){ try{ sync=JSON.parse(localStorage.getItem(LS_SYNC)||'null'); }catch(e){} }
 let syncSt={k:sync?'idle':'off',at:0,msg:''};
-let _tok=null,_tokExp=0,_syncBusy=false,_syncAgain=false,_pushTimer=null;
+let _tok=null,_tokExp=0,_syncBusy=false,_syncAgain=false,_pushTimer=null,_syncOk=false;   // _syncOk＝這次開啟後已經和雲端同步成功過
 const te=new TextEncoder(), td=new TextDecoder();
 const b64=u8=>{ let s=''; for(let i=0;i<u8.length;i+=0x8000) s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000)); return btoa(s); };
 const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
@@ -1681,7 +1709,16 @@ function applyHistory(){
   Object.keys(h).forEach(k=>{ state.cfg.hist[k]={cost:Number(h[k].cost)||0,it:Object.assign({},h[k].it),t:now}; });
   state.cfg.histV=v;
   return true;
-}// 把雲端內容併進本機，回傳本機有沒有變。點數／平分名單／網址各自看修改時間，確認註記逐人逐月看修改時間，較新的為準
+}
+// 本機設定檔換了試算表網址（COMMISSION_SHEET_URL_VERSION 加 1）：改用設定檔的網址、記成一次修改，
+// 才會同步到手機與每個人的個人頁（App 裡另外貼過網址的也一起換掉）。每個版本只做一次
+function applyUrlVer(){
+  const v=window.COMMISSION_SHEET_URL_VERSION;
+  if(!v||!window.COMMISSION_SHEET_URL||state.cfg.urlV===v) return false;
+  delete state.cfg.url; state.cfg.tU=Date.now(); state.cfg.urlV=v;
+  return true;
+}
+// 把雲端內容併進本機，回傳本機有沒有變。點數／平分名單／網址各自看修改時間，確認註記逐人逐月看修改時間，較新的為準
 function mergeRemote(rm){
   let ch=false; const c=state.cfg, rc=rm.cfg||{}, rr=rc.rates||{};
   if((rc.tR||0)>(c.tR||0)){ c.rates=clone(rr); c.tR=rc.tR; ch=true; }
@@ -1755,16 +1792,19 @@ async function syncNow(){
       if(!confirmNewSpace()){ sync=null; try{ localStorage.removeItem(LS_SYNC); }catch(e){} setSync('off'); return; }
     }
     if(sync.unverified){ delete sync.unverified; localStorage.setItem(LS_SYNC,JSON.stringify(sync)); }
-    const hadUrl=!!sheetUrl();
+    const urlBefore=sheetUrl();
     let ch=!!(remote&&mergeRemote(remote));
     if(applyDefaults()) ch=true;   // 先併完雲端再補預設值，才不會蓋掉別台裝置剛改的數字
     if(applyHistory()) ch=true;
+    if(applyUrlVer()) ch=true;
     if(ch){ saveState(true); renderAll(); }
     const mine=buildPayload();
     if(!remote||stable(mine)!==stable(remote)) await cloudReq('PUT',await seal(mine));
     setSync('ok');
-    if(!hadUrl&&sheetUrl()) refresh(true);
-    if(ch) publishViews();   // 別台裝置改了點數或註記 → 個人查看的內容也要更新
+    if(sheetUrl()&&sheetUrl()!==urlBefore) refresh(true,true);   // 換了試算表（或第一次拿到網址）→ 整份重讀
+    // 個人查看連結要等第一次同步完才放：這台裝置可能還記著別台已經停用或換新的連結，先放的話會把它們救回來
+    if(!_syncOk){ _syncOk=true; publishViews(); }
+    else if(ch) publishViews();   // 別台裝置改了點數或註記 → 個人查看的內容也要更新
   }catch(e){
     setSync(e.kind==='denied'?'denied':(navigator.onLine===false?'offline':'error'),(e&&e.message)||String(e));
   }finally{
@@ -1845,7 +1885,9 @@ async function forceUpdate(){
 // 不含另一個身分的點數、科部、原始點數，也不含別人的紀錄。
 // 本人端：用連結裡的金鑰解開，再自己即時讀試算表算出點數，所以主任沒開 App 時數字也會跟著試算表更新。
 // 連結在 cfg.views 裡的鍵：專師＝姓名，醫師＝'d|姓名'（viewWho 拆回身分與姓名）
-const _pubHash={}, pubSt={};
+// 停用或換新的連結：代碼不丟掉（停用＝{del:1,t,tok}；換新時舊代碼放進 old），每次開啟都再對雲端刪一次那些節點。
+// 這樣即使有一台還沒同步到的舊裝置把它放回去過，下一次任何一台打開就又刪掉。_delDone＝這次開啟已經刪過的代碼
+const _pubHash={}, pubSt={}, _delDone={};
 let _pubBusy=false,_pubAgain=false;
 // 連結帶 openExternalBrowser=1：在 LINE 裡點開時會直接交給手機的瀏覽器（LINE 內建瀏覽器不能加到主畫面）
 const viewUrl=tok=>(location.protocol==='file:'?PUBLIC_URL:location.origin+location.pathname.replace(/[^/]*$/,''))+'me.html?openExternalBrowser=1#me='+tok;
@@ -1878,14 +1920,19 @@ function viewBlob(key){
 }
 async function publishViews(){
   if(VIEW||!window.crypto||!crypto.subtle) return;
+  if(sync&&!_syncOk) return;   // 還沒和雲端同步過：先等（同步成功後會自動再叫一次）
   const vs=state.cfg.views||{}; if(!Object.keys(vs).length) return;
   if(_pubBusy){ _pubAgain=true; return; }
-  _pubBusy=true; let dirty=false;
+  _pubBusy=true;
+  const drop=async tok=>{ const p=tok&&parseViewTok(tok); if(!p||_delDone[tok]) return;
+    await cloudReq('DELETE',null,p.id); _delDone[tok]=1; delete _pubHash[p.id]; };
   for(const name of Object.keys(vs)){
-    const v=vs[name], p=v.tok&&parseViewTok(v.tok); if(!p) continue;
+    const v=vs[name];
     try{
-      if(v.del){ await cloudReq('DELETE',null,p.id); delete v.tok; delete _pubHash[p.id]; dirty=true; }
-      else if(sheetUrl()){
+      for(const t of v.old||[]) await drop(t);   // 換新以前的舊連結
+      if(v.del){ await drop(v.tok); continue; }
+      const p=v.tok&&parseViewTok(v.tok); if(!p) continue;
+      if(sheetUrl()){
         const b=viewBlob(name), h=stable(b);
         if(_pubHash[p.id]!==h){ await cloudReq('PUT',await seal(b,p.key),p.id); _pubHash[p.id]=h; }
         pubSt[name]='ok';
@@ -1893,20 +1940,21 @@ async function publishViews(){
     }catch(e){ pubSt[name]='err'; }
   }
   _pubBusy=false;
-  if(dirty) saveState();
   renderCfg();
   if(_pubAgain){ _pubAgain=false; setTimeout(publishViews,300); }
 }
 async function newView(name){
   if(!sheetUrl()){ alert('要先設定試算表網址，才能建立查看連結。'); return; }
-  const old=state.cfg.views[name];
+  if(sync&&!_syncOk){ alert('還在和雲端同步，請稍等幾秒再試一次。'); return; }
+  const old=state.cfg.views[name], olds=((old&&old.old)||[]).slice();
   if(old&&old.tok&&!old.del){
     if(!confirm(`替「${viewWho(name).name}」換一條新的連結？\n舊的連結會立刻失效，要把新連結重新傳給他。`)) return;
-    try{ await cloudReq('DELETE',null,parseViewTok(old.tok).id); }
+    try{ await cloudReq('DELETE',null,parseViewTok(old.tok).id); _delDone[old.tok]=1; }
     catch(e){ alert('連不上雲端，舊連結沒辦法停用，請稍後再試。'); return; }
   }
+  if(old&&old.tok&&!olds.includes(old.tok)) olds.push(old.tok);   // 停用過或換掉的代碼都留著，之後每次開啟再刪一次
   const tok=b64(crypto.getRandomValues(new Uint8Array(48))).replace(/\+/g,'-').replace(/\//g,'_');
-  state.cfg.views[name]={tok,t:Date.now()};
+  state.cfg.views[name]=olds.length?{tok,t:Date.now(),old:olds}:{tok,t:Date.now()};
   saveState(); renderCfg(); await publishViews();
   if(pubSt[name]==='err') alert('連結建立了，但目前連不上雲端、內容還沒放上去。連上網路後會自動補上，到時候連結才打得開。');
 }
@@ -1915,16 +1963,14 @@ function viewsHtml(){
   const vs=state.cfg.views||{}, live=Object.keys(vs).filter(k=>!vs[k].del);
   const nps=[...new Set([...state.data.roster.np,...liveSharers(),...live.filter(k=>viewWho(k).role==='n')])].filter(Boolean);
   const docs=[...new Set([...state.data.roster.doc,...live.filter(k=>viewWho(k).role==='d').map(k=>k.slice(2))])].filter(Boolean);
-  if(!nps.length&&!docs.length) return '<div class="hint">讀到試算表的專師、醫師名單後，這裡會列出可以建立連結的人。</div>';
+  if(!nps.length&&!docs.length) return '<div class="mut">還沒讀到試算表的名單。</div>';
   const table=(head,names,pre)=>names.length?`<div class="tw"><table><thead><tr><th class="l">${head}</th><th class="l">查看連結</th></tr></thead><tbody>`+
     names.map(n=>{ const key=pre+n, v=vs[key], on=v&&!v.del&&v.tok, k=esc(key);
       return `<tr><td class="l"><b>${esc(n)}</b></td><td class="l" style="white-space:normal">${on
         ?`<span class="tag ${pubSt[key]==='err'?'no':'ok'}">${pubSt[key]==='err'?'還沒放上雲端（連不上）':'✓ 已建立'}</span> <button class="btn mini" data-act="view-copy" data-n="${k}">複製連結</button> `+
          `<button class="btn mini ghost" data-act="view-new" data-n="${k}">換一條新的</button> <button class="btn mini ghost" data-act="view-del" data-n="${k}">停用</button>`
         :`<button class="btn mini outline" data-act="view-new" data-n="${k}">建立連結</button>`}</td></tr>`; }).join('')+'</tbody></table></div>':'';
-  return `<div class="hint">每個人一條專屬連結。打開後即時看到<b>自己的</b>件數、點數與確認狀態，看不到別人的，也不能改任何東西。
-      拿到連結的人就看得到，請只傳給本人；外流或人員異動時按「停用」或「換一條新的」。</div>`+
-    table('專師',nps,'')+table('醫師',docs,'d|');
+  return table('專師',nps,'')+table('醫師',docs,'d|');
 }
 // ---- 裝成手機 App（個人查看頁最下面的說明） ----
 let _installEvt=null;   // Android／電腦 Chrome 可以由網頁按鈕叫出安裝視窗；iPhone 只能請使用者自己「加入主畫面」
@@ -1965,11 +2011,12 @@ async function loadView(){
     let b=null;
     if(blob&&blob.data){ try{ b=await unseal(blob,VIEW.key); }catch(e){ b=null; } }
     if(!b){ viewInfo=null; viewErr='gone'; }
-    else{ const first=!viewInfo, sig=stable(b);
+    else{ const first=!viewInfo, sig=stable(b), urlBefore=sheetUrl();
       if(first||viewInfo.sig!==sig){ applyView(b); viewInfo={name:b.name,role:b.role==='d'?'d':'n',inPool:!!b.inPool,sig,
           noPrice:!Object.values(b.rates||{}).some(r=>r&&r.price!=null)}; }   // noPrice＝主任那邊還是舊版放上來的內容，沒帶品項點數
       viewErr=null;
       if(first){ renderAll(); refresh(true); return; }
+      if(sheetUrl()!==urlBefore) refresh(true,true);   // 主任換了試算表
     }
   }catch(e){ if(!viewInfo) viewErr='net'; }
   renderAll();
@@ -2051,15 +2098,12 @@ function renderMe(ks){
         return `<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td>`+(doc
           ?`<td class="amt">${fmt(p.amt)}</td><td class="n">${noP?'—':fmt(p.sales||0)}</td><td class="n">${hh==null?'—':hh}</td><td class="n">${noP||rt==null?'—':fmt(rt)}</td></tr>`
           :`<td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`+
-           `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`); }).join('')+`</tbody></table></div>
-      ${doc?'<div class="sub2">上班時數讀自急診醫師班表（這個月算到今天），不含支援其他單位的班；每小時＝品項總點數 ÷ 上班時數。</div>':''}</details>
+           `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`); }).join('')+`</tbody></table></div></details>
     ${doc?`<div class="card"><h2>累積點數</h2>${cumTiles(cum)}
-      <div class="sub2">點數是累積的：以 ${fmt(LED_UNIT)} 點為一單位確認，不一定每個月；沒確認完的留到下次。數字跟著試算表每分鐘自動更新，實際以主任核對為準。</div>
       <div class="tw" style="margin-top:8px"><table><thead><tr><th class="l">確認日期</th><th>點數</th><th class="l">備註</th></tr></thead><tbody>`+
       (cum.recs.slice().reverse().map(r=>`<tr><td class="l">${esc(r.at)}</td><td class="n">${fmt(r.amt)}</td><td class="l" style="white-space:normal">${esc(r.note)}</td></tr>`).join('')||
        '<tr><td class="l mut" colspan="3">還沒有確認紀錄</td></tr>')+`</tbody></table></div></div>`
-    :`<div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div>
-      <div class="sub2">數字跟著試算表每分鐘自動更新；實際點數以主任核對為準。</div></div>`}
+    :`<div class="card"><div class="row" style="margin:0"><b>確認狀態</b>${paidTxt}</div></div>`}
     ${bigMeHtml()}
     ${installHtml()}
     <div style="text-align:center;margin-top:8px"><button class="btn mini ghost" data-act="me-forget">在這台裝置移除這個連結</button></div>`;
@@ -2096,7 +2140,7 @@ function act(a,t,ev){
   else if(a==='view-del'){
     const n=t.dataset.n, v=state.cfg.views[n]; if(!v||v.del) return;
     if(!confirm(`停用「${viewWho(n).name}」的查看連結？\n停用後那條連結立刻失效，之後可以再建立新的。`)) return;
-    state.cfg.views[n]={del:1,t:Date.now(),tok:v.tok}; saveState(); renderCfg(); publishViews();
+    state.cfg.views[n]=Object.assign({del:1,t:Date.now(),tok:v.tok},v.old?{old:v.old}:{}); saveState(); renderCfg(); publishViews();
   }
   else if(a==='view-copy'){
     const v=state.cfg.views[t.dataset.n]; if(!v||!v.tok) return;
@@ -2143,6 +2187,7 @@ function act(a,t,ev){
   else if(a==='brand-cancel'){ delete brandNew[t.dataset.pid]; if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); renderRates(); }
   else if(a==='rate-save'){
     if(!draftDirty()||!cur) return;
+    if(!confirm(`儲存 ${keyLabel(cur)}的每件點數？\n\n從 ${keyLabel(cur)}起適用，之後沒有另外修改的月份也跟著沿用；之前的月份不受影響。`)) return;
     // 存成「這個月的一組」：從這個月起適用，之後沒另外改的月份沿用它；之前的月份不動
     const full=draftRates(), now=Date.now(), pm=state.pay[cur];
     state.cfg.rateSets[cur]={r:clone(full),t:now};
@@ -2205,12 +2250,25 @@ function act(a,t,ev){
       if(!s||typeof s!=='object'||!s.pay||!s.cfg){ alert('這不是本系統的備份檔。'); return; }
       const live=k=>Object.values((s.pay[k]&&s.pay[k].paid)||{}).filter(r=>r&&!r.del).length;
       const n=Object.keys(s.pay).reduce((a,k)=>a+live(k),0);
-      if(!confirm(`匯入這份備份（${Object.keys(s.pay).filter(live).length} 個月、${n} 筆確認註記）？\n\n目前這台裝置上的設定與確認註記會被它整個取代。`)) return;
-      state=normState(s);
-      // 匯入的內容視為「現在改的」，開著雲端同步時才不會被雲端上較舊的蓋回去
-      const now=Date.now(); state.cfg.tR=state.cfg.tS=now; if(state.cfg.url) state.cfg.tU=now;
-      Object.values(state.pay).forEach(pm=>{ if(pm.cfgT) pm.cfgT=now; Object.values(pm.paid).forEach(r=>r.t=now); });
-      saveState(); cur=null; renderAll(); refresh(true);
+      if(!confirm(`匯入這份備份（${Object.keys(s.pay).filter(live).length} 個月、${n} 筆確認註記）？\n\n目前的設定與確認註記會被它整個取代${sync?'，開著雲端同步的其他裝置也會跟著換成這份':''}。\n匯入前會先下載一份目前的備份。`)) return;
+      download(`急診點數備份_匯入前_${today().replace(/-/g,'')}.json`,JSON.stringify(state),'application/json');
+      const old=state, s2=normState(s), c=s2.cfg, now=Date.now();
+      // 備份裡的內容一律當成「現在改的」；目前有、備份裡沒有的逐筆留取消標記。
+      // 開著雲端同步時，雲端（別台裝置）上較新的內容才不會又併回來
+      c.tR=c.tS=now;
+      const restore=(curO,bak)=>{ Object.keys(bak).forEach(k=>{ if(bak[k]) bak[k].t=now; }); Object.keys(curO||{}).forEach(k=>{ if(!bak[k]) bak[k]={del:1,t:now}; }); };
+      restore(old.cfg.rateSets,c.rateSets); restore(old.cfg.hist,c.hist); restore(old.led,s2.led);
+      c.brand={m:Object.assign({},(c.brand&&c.brand.m)||{}),t:now};
+      c.big=Object.assign({on:true,min:5000},c.big,{t:now});
+      // 個人查看連結與試算表網址照目前的（換回舊的會讓之後才建立的連結失效、或讀回舊的試算表）
+      c.views=old.cfg.views; ['url','tU','urlV'].forEach(f=>{ if(old.cfg[f]!=null) c[f]=old.cfg[f]; else delete c[f]; });
+      [...new Set([...Object.keys(old.pay),...Object.keys(s2.pay)])].forEach(k=>{
+        const bm=s2.pay[k]||(s2.pay[k]={paid:{}}), om=old.pay[k]||{paid:{}};
+        bm.cfg=bm.cfg||null; bm.cfgT=now;
+        Object.keys(bm.paid).forEach(pk=>{ bm.paid[pk].t=now; });
+        Object.keys(om.paid||{}).forEach(pk=>{ if(!bm.paid[pk]) bm.paid[pk]={del:1,t:now}; });
+      });
+      state=s2; saveState(); cur=null; renderAll(); refresh(true);
     });
   }
 }
@@ -2284,7 +2342,7 @@ if(VIEW){
   loadView();
   setInterval(()=>{ if(document.visibilityState==='visible'){ loadView(); refresh(true); } },60*1000);
 }else{
-  if(!sync){ const a=applyDefaults(), b=applyHistory(); if(a||b) saveState(true); }
+  if(!sync){ const a=applyDefaults(), b=applyHistory(), u=applyUrlVer(); if(a||b||u) saveState(true); }
   renderAll();
   renderSync();
   refresh(true);
