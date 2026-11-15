@@ -268,7 +268,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.15e';
+const APP_VER='2026.11.16a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -310,7 +310,8 @@ const PRODUCTS=[
   {id:'glue',    name:'黏著',  re:/黏著|黏合/},
   {id:'repair',  name:'修護液',re:/修護/},
   {id:'film',    name:'膠片',  re:/^(?!.*銀).*(膠片|貼片)/},   // 試算表「疤痕膠片」（10月分頁起）
-  {id:'silver',  name:'銀離子',re:/銀/},   // 試算表還沒有這一欄；欄名有「銀」就算這一項
+  {id:'silver',  name:'銀泡棉(大)',re:/^(?!.*小).*銀/},   // 欄名有「銀」、沒有「小」：11月起分大小，「銀泡棉」「銀泡棉(大)」都算這一項（id 沿用原本的 silver，點數與廠牌設定留著）
+  {id:'silverS', name:'銀泡棉(小)',re:/^(?=.*銀).*小/},   // 試算表 11月分頁「銀泡棉(小)」
 ];
 // 各品項屬於哪個廠牌：主任在「每件點數」表自己選（cfg.brand={m:{品項:廠牌},t}，跟著加密同步，所以廠牌名稱不會出現在網頁檔裡）。
 // 選了之後主畫面多一塊「該廠牌 總點數」，點開「總點數」也會分廠牌
@@ -1144,7 +1145,7 @@ function refreshCfgRow(pid){
 }
 
 // ---------- 組成橫條 ----------
-const PROD_COLOR={dressing:'#1a4a7a',scar:'#5b9bd5',glue:'#ed7d31',repair:'#2e9e6b',film:'#c0504d',silver:'#6c7a89'}, XCOLOR=['#8e6bb5','#c9a34a','#4fb3bf','#d16a8a'];
+const PROD_COLOR={dressing:'#1a4a7a',scar:'#5b9bd5',glue:'#ed7d31',repair:'#2e9e6b',film:'#c0504d',silver:'#6c7a89',silverS:'#a3b1bf'}, XCOLOR=['#8e6bb5','#c9a34a','#4fb3bf','#d16a8a'];
 function prodColor(pid){ if(PROD_COLOR[pid]) return PROD_COLOR[pid]; const i=productList().map(p=>p.id).filter(x=>!PROD_COLOR[x]).indexOf(pid); return XCOLOR[(i<0?0:i)%XCOLOR.length]; }
 // 一條橫的長方形，各部分照占比分色；下面逐項列出點數與百分比。parts=[{label,note,v,c}]，由大到小排；0 的不畫、列在最後
 function mixHtml(parts){
