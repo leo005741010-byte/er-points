@@ -255,7 +255,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.15a';
+const APP_VER='2026.11.15b';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -302,7 +302,9 @@ const PRODUCTS=[
 // 品項分兩組，點開「總點數」時分開看。組名只放本機設定檔與加密的雲端設定（見 grpName）
 const GROUPS=[{id:'g1',pids:['dressing','scar','glue','repair']},{id:'g2',pids:['film','silver']}];
 const grpOf=pid=>{ const g=GROUPS.find(g=>g.pids.includes(pid)); return g?g.id:null; };
-const grpName=gid=>{ const n=(state.cfg.grp&&state.cfg.grp.n)||window.COMMISSION_GROUP_NAMES||{}; return n[gid]||(gid==='g1'?'第一組':'第二組'); };
+const grpProds=gid=>GROUPS.find(g=>g.id===gid).pids.map(pid=>PRODUCTS.find(p=>p.id===pid).name).join('・');
+const grpNameRaw=gid=>((state.cfg.grp&&state.cfg.grp.n)||window.COMMISSION_GROUP_NAMES||{})[gid]||'';
+const grpName=gid=>grpNameRaw(gid)||grpProds(gid);   // 組名還沒同步到這台裝置時，先用品項當名稱
 // 每一件的點數怎麼分：doc 醫師、promo 主要、pool 放進專師平分池、fund 科部（不屬於個人）；
 // price＝每件的品項點數，只用來算「品項總點數」；cost＝每件的原始點數，只用來算「原始總點數」「總點數差」與「折讓點數」。兩個都不影響每個人的點數
 const FIELDS=['doc','promo','pool','fund','price','cost'];
@@ -1124,7 +1126,7 @@ const grpSrc=k=>state.data.months[k]?calcMonth(k):{vendor:histVendor(k),grp:hist
 // [{name,v,c}]：兩組各一項；有不屬於任何一組的品項時多一項「其他」，加起來等於總點數
 const GRP_COLOR={g1:'#1a4a7a',g2:'#c0504d'};
 function grpParts(c){
-  const out=GROUPS.map(g=>({name:grpName(g.id),v:c.grp[g.id].vendor,c:GRP_COLOR[g.id]})), o=c.vendor-out.reduce((t,x)=>t+x.v,0);
+  const out=GROUPS.map(g=>({name:grpName(g.id),note:grpNameRaw(g.id)?grpProds(g.id):'',v:c.grp[g.id].vendor,c:GRP_COLOR[g.id]})), o=c.vendor-out.reduce((t,x)=>t+x.v,0);
   if(Math.round(o)) out.push({name:'其他',v:o,c:'#b8c2cc'});
   return out;
 }
@@ -1268,8 +1270,9 @@ function showTrend(m){
   const who=m==='sales'&&!VIEW&&cur&&state.data.months[cur]?people(calcMonth(cur)).filter(p=>p.role==='d'&&p.sales>0):[];
   const whoH=(who.length?`<div class="cumh">${keyLabel(cur)}・各醫師的占比</div>`+mixHtml(who.map(p=>({label:p.name||'（未填醫師）',note:sumVals(p.it)+' 件',v:p.sales,c:personColor('d',p.name)}))):'')+
     // 主任頁點「總點數」：最上面先看這個月兩組各多少
-    (m==='vendor'&&!VIEW&&cur&&state.data.months[cur]?(()=>{ const ps=grpParts(calcMonth(cur)), mh=mixHtml(ps.map(x=>({label:x.name,note:'',v:x.v,c:x.c})));
-      return mh?`<div class="cumh">${keyLabel(cur)}・${ps.map(x=>esc(x.name)).join('／')}</div>${mh}`:''; })():'');
+    (m==='vendor'&&!VIEW&&cur&&state.data.months[cur]?(()=>{ const ps=grpParts(calcMonth(cur)), mh=mixHtml(ps.map(x=>({label:x.name,note:x.note||'',v:x.v,c:x.c})));
+      const named=GROUPS.every(g=>grpNameRaw(g.id));
+      return mh?`<div class="cumh">${keyLabel(cur)}・${named?GROUPS.map(g=>esc(grpName(g.id))).join('／'):'兩組各多少'}</div>${mh}`:''; })():'');
   $('dlg').innerHTML=`<h2>${T.title}${cumH?'':'・逐月趨勢'}<button class="btn mini ghost" data-act="close">關閉</button></h2>
     ${whoH}${cumH}${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
     <div class="tw"><table><thead><tr><th class="l">月份</th><th>${T.title}</th><th>較上月</th></tr></thead><tbody>`+
