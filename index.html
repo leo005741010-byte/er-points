@@ -269,7 +269,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.20a';
+const APP_VER='2026.11.20b';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -749,7 +749,7 @@ async function fetchInv(id){
   const num=v=>v==null||v===''||isNaN(Number(v))?null:Number(v);
   const md=v=>{ const d=parseDate(v); return d&&d.m?`${d.m}/${d.d}`:''; };
   const evs=(ev.table.rows||[]).map(r=>{ const c=r.c||[], g=i=>gcell(c[i]), q={}, st={}, df={};
-    INV_PIDS.forEach((pid,j)=>{ q[pid]=num(g(5+j))||0; st[pid]=num(g(12+j)); df[pid]=num(g(19+j)); });
+    INV_PIDS.forEach((pid,j)=>{ q[pid]=num(g(5+j)); st[pid]=num(g(12+j)); df[pid]=num(g(19+j)); });   // q 空著＝這次沒盤／沒補這一項
     return {d:md(g(0)),tab:normName(g(1)),seq:g(2)==null?'':String(g(2)),type:normName(g(3)),np:normName(g(4)),q,st,df,res:String(g(26)||'').trim()}; });
   const lr=last.table&&last.table.rows&&last.table.rows[0], now={};
   if(lr) INV_PIDS.forEach((pid,j)=>{ now[pid]=num(gcell((lr.c||[])[1+j])); });
@@ -767,14 +767,17 @@ async function refreshInv(url){
 function invSummary(){
   const inv=state.data.inv; if(!inv||!inv.ev) return null;
   let li=-1; inv.ev.forEach((e,i)=>{ if(e.type==='盤點') li=i; });
-  const lastCnt=li>=0?inv.ev[li]:null, add={};
-  INV_PIDS.forEach(pid=>add[pid]=0);
-  inv.ev.slice(li+1).forEach(e=>{ if(e.type==='補貨') INV_PIDS.forEach(pid=>add[pid]+=e.q[pid]||0); });
-  return {inv,lastCnt,li,add};
+  // 每個品項各自最近一次有盤到的那一次（只盤部分品項時，各品項的上次盤點不一樣），以及之後補了多少
+  const lastCnt=li>=0?inv.ev[li]:null, per={};
+  INV_PIDS.forEach(pid=>{ let k=-1; inv.ev.forEach((e,i)=>{ if(e.type==='盤點'&&e.q[pid]!=null) k=i; });
+    let add=0; if(k>=0) inv.ev.slice(k+1).forEach(e=>{ if(e.type==='補貨') add+=e.q[pid]||0; });
+    per[pid]=k<0?null:{cnt:inv.ev[k].q[pid],d:inv.ev[k].d,add}; });
+  return {inv,lastCnt,li,per};
 }
 // 盤點結果用 App 自己的品項名稱重組（不用試算表上的文字）：沒有可比對的＝首次盤點
 function invRes(e){
   if(!e||e.type!=='盤點') return '';
+  if(!INV_PIDS.some(pid=>e.q[pid]!=null)) return '沒有填數量';
   const ds=INV_PIDS.filter(pid=>e.df[pid]!=null);
   if(!ds.length) return '首次盤點';
   const bad=ds.filter(pid=>e.df[pid]).map(pid=>`${prodName(pid)}${e.df[pid]<0?'少':'多'}${fmt(Math.abs(e.df[pid]))}`);
@@ -787,12 +790,12 @@ function renderInv(){
   const el=$('inv-view'); if(!el) return;
   const s=invSummary();
   if(VIEW||!cur||!s){ el.innerHTML=''; return; }   // 還沒讀到過庫存表（試算表還沒有「庫存計算」分頁）就不顯示
-  const {inv,lastCnt,add}=s, now=inv.now||{};
+  const {inv,lastCnt,per}=s, now=inv.now||{};
   const tag=!lastCnt?'':invBad(lastCnt)?'<span class="tag no">✗ 盤點不符</span>':invRes(lastCnt)==='✓ 相符'?'<span class="tag ok">✓ 盤點相符</span>':'';
   const cell=v=>v==null?'<span class="mut">—</span>':`<span${v<0?' style="color:var(--bad);font-weight:700"':''}>${fmt(v)}</span>`;
-  const rows=INV_PIDS.map(pid=>{ const n=lastCnt?now[pid]:null, c0=lastCnt?lastCnt.q[pid]||0:null, a=lastCnt?add[pid]:null;
-    const used=n==null||c0==null?null:c0+a-n;
-    return `<tr><td class="l"><b>${esc(prodName(pid))}</b></td><td class="n" style="font-size:16px">${cell(n)}</td><td class="n">${cell(c0)}</td><td class="n">${cell(a)}</td><td class="n">${cell(used)}</td></tr>`; }).join('');
+  const rows=INV_PIDS.map(pid=>{ const p=per[pid], n=p?now[pid]:null, used=n==null?null:p.cnt+p.add-n;
+    return `<tr><td class="l"><b>${esc(prodName(pid))}</b></td><td class="n" style="font-size:16px">${cell(n)}</td>`+
+      `<td class="n">${p?`${cell(p.cnt)}<small class="mut"> ${esc(p.d)}</small>`:cell(null)}</td><td class="n">${cell(p?p.add:null)}</td><td class="n">${cell(used)}</td></tr>`; }).join('');
   const list=inv.ev.map((e,i)=>({e,i})).reverse();
   const resTxt=e=>e.type==='補貨'?INV_PIDS.filter(pid=>e.q[pid]).map(pid=>`${esc(prodName(pid))} ＋${e.q[pid]}`).join('、')||'—'
     :`<span style="${invBad(e)?'color:var(--bad);font-weight:700':/^✓/.test(invRes(e))?'color:var(--ok)':''}">${esc(invRes(e))}</span>`;
@@ -809,6 +812,7 @@ function showInvEv(i){
   const inv=state.data.inv, e=inv&&inv.ev[+i]; if(!e) return;
   const pc=e.type==='盤點';
   const tr=INV_PIDS.map(pid=>{ const q=e.q[pid]||0, df=e.df[pid], st=e.st[pid];
+    if(pc&&e.q[pid]==null) return '';   // 這次沒盤這一項
     if(pc){ const exp=df==null?null:q-df;
       return `<tr><td class="l">${esc(prodName(pid))}</td><td class="n">${fmt(q)}</td><td class="n">${exp==null?'—':fmt(exp)}</td>`+
         `<td class="n"${df?' style="color:var(--bad);font-weight:700"':''}>${df==null?'—':df===0?'0':(df>0?'多 ':'少 ')+fmt(Math.abs(df))}</td></tr>`; }
@@ -824,6 +828,58 @@ function invAlertHtml(){
   const e=s.lastCnt;
   return `<div class="note bad"><b>⚠ ${esc(e.d)} 盤點和應有的數量不符</b>（${esc(e.np||'未填專師')}）：${esc(invRes(e).replace(/^✗\s*/,''))}　`+
     `<button class="btn mini outline" data-act="inv-ev" data-k="${s.li}">看明細</button> <button class="btn mini" data-act="inv-ok">知道了</button></div>`;
+}
+
+// ---------- 月份鎖住（2026-11-20） ----------
+// 主任頁每個月可以「鎖住」：試算表那個月的分頁加保護，只有試算表擁有者能改（試算表的 Apps Script 網頁程式做，這裡用 JSONP 呼叫）。
+// 網址與金鑰放本機設定檔（COMMISSION_LOCK_URL／_KEY，換了就把 COMMISSION_LOCK_VERSION 加 1），跟著加密雲端同步到主任的其他裝置；公開檔裡沒有
+let lockBusy=false, lockFail=null;
+const lockCfg=()=>{ const l=state.cfg.lock; return l&&l.url&&l.key?l:null; };
+function applyLockVer(){
+  const v=window.COMMISSION_LOCK_VERSION;
+  if(!v||!window.COMMISSION_LOCK_URL||!window.COMMISSION_LOCK_KEY||state.cfg.lockV===v) return false;
+  state.cfg.lock={url:window.COMMISSION_LOCK_URL,key:window.COMMISSION_LOCK_KEY,t:Date.now()}; state.cfg.lockV=v;
+  return true;
+}
+function lockApi(params,timeoutMs){
+  const l=lockCfg(); if(!l) return Promise.reject(new Error('還沒設定'));
+  return new Promise((resolve,reject)=>{
+    const cb='__lock'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+    const s=document.createElement('script'); let done=false;
+    const fin=()=>{ done=true; clearTimeout(t); window[cb]=function(){}; s.remove(); };
+    const t=setTimeout(()=>{ if(!done){ fin(); reject(new Error('連線逾時')); } },timeoutMs||30000);
+    window[cb]=d=>{ if(done) return; fin(); if(d&&d.ok) resolve(d); else reject(new Error((d&&d.err)||'試算表回傳錯誤')); };
+    s.onerror=()=>{ if(!done){ fin(); reject(new Error('連不上試算表')); } };
+    s.src=l.url+'?'+new URLSearchParams(Object.assign({cb,k:l.key},params));
+    document.head.appendChild(s);
+  });
+}
+// 月份 → 試算表分頁名稱（封存的「115年9月」優先，否則「9月」）
+const tabOfKey=k=>{ const [y,m]=k.split('-').map(Number), arch=`${y}年${m}月`; return ((_lay&&_lay.real)||[]).includes(arch)?arch:`${m}月`; };
+const isLockedKey=k=>!!(state.data.locks&&(state.data.locks.tabs||[]).includes(tabOfKey(k)));
+async function refreshLocks(){
+  if(VIEW||!lockCfg()) return false;
+  try{
+    const d=await lockApi({a:'list'}), tabs=(d.locked||[]).slice().sort(); lockFail=null;
+    if(JSON.stringify(tabs)===JSON.stringify((state.data.locks||{}).tabs||[])) return false;
+    state.data.locks={tabs}; saveState(true); return true;
+  }catch(e){ lockFail=(e&&e.message)||String(e); return false; }
+}
+async function setLock(k,lock){
+  const tab=tabOfKey(k);
+  if(!confirm(lock?`鎖住 ${keyLabel(k)}？\n\n試算表「${tab}」分頁會被保護，除了你（試算表擁有者）沒有人能再修改。之後可以再解鎖。`
+    :`解鎖 ${keyLabel(k)}？\n\n試算表「${tab}」分頁會恢復成大家都能修改。`)) return;
+  lockBusy=true; renderMonth();
+  try{ const d=await lockApi({a:lock?'lock':'unlock',tab}); state.data.locks={tabs:(d.locked||[]).slice().sort()}; lockFail=null; saveState(true); }
+  catch(e){ alert((lock?'鎖住':'解鎖')+'沒有成功：'+((e&&e.message)||e)); }
+  lockBusy=false; renderAll();
+}
+function lockHtml(k){
+  if(VIEW||!lockCfg()||!k) return '';
+  if(lockBusy) return '<span class="r"><span class="tag">處理中…</span></span>';
+  return isLockedKey(k)
+    ?`<span class="r"><span class="tag ok">🔒 已鎖住</span><button class="btn mini ghost" data-act="unlock" data-k="${esc(k)}">解鎖</button></span>`
+    :`<span class="r"><button class="btn mini outline" data-act="lock" data-k="${esc(k)}">🔒 鎖住這個月</button></span>`;
 }
 
 // 備援：試算表改成不公開後，改上傳「檔案→下載→Microsoft Excel」的 xlsx
@@ -892,10 +948,11 @@ async function refresh(silent,full){
     const r=mergeResult(await fetchSheet(url,full||!silent),'sheet');   // 按「更新」＝整份重讀；自動的只讀有資料的分頁
     fail=null; if(r.delta) delta={txt:r.delta,at:Date.now()};
     const ic=VIEW?false:await refreshInv(url);   // 庫存（只有主任頁）；讀失敗不影響點數
+    const lc=VIEW?false:await refreshLocks();    // 哪幾個月鎖住了（只有主任頁）
     busy=false;
     loadSched();
     if(r.changed) publishViews();
-    if(r.changed||ic||!silent||!cur) renderAll(); else renderStatus();
+    if(r.changed||ic||lc||!silent||!cur) renderAll(); else renderStatus();
   }catch(e){
     busy=false; fail={at:new Date().toISOString(),msg:(e&&e.message)||String(e)};
     renderStatus(); if(!silent) alert('讀取試算表失敗：'+fail.msg+'\n\n畫面上保留的是上次讀到的資料。');
@@ -1029,7 +1086,7 @@ function renderMonth(){
   const pids=monthPids(c);
   const dTot=docs.reduce((s,p)=>s+p.amt,0), nTot=nps.reduce((s,p)=>s+p.amt,0), promoTot=nps.reduce((s,p)=>s+p.promo,0);
   const canPay=role=>list.some(p=>p.role===role&&p.payable&&!p.rec&&p.amt>0);
-  let h=`<div class="mhead"><h2>${keyLabel(cur)} 點數</h2></div>`;
+  let h=`<div class="mhead"><h2>${keyLabel(cur)} 點數</h2>${lockHtml(cur)}</div>`;
   const w=monthWarnings(c,list);
   if(w.length) h+=`<div class="note warn"><ul>${w.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
   // 品項概況：總點數＝各品項件數×品項點數；筆數＝有品項的紀錄數
@@ -1791,7 +1848,7 @@ function buildPayload(){
   Object.assign(rates,liveRates());
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm||(!Object.keys(pm.paid||{}).length&&!pm.cfgT)) return;
     pay[k]={paid:pm.paid||{},cfg:pm.cfg||null,cfgT:pm.cfgT||0}; });
-  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{},big:c.big||{on:true,min:5000,t:0},brand:c.brand||null},pay,led:state.led||{}};
+  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{},big:c.big||{on:true,min:5000,t:0},brand:c.brand||null,lock:c.lock||null},pay,led:state.led||{}};
 }
 const rateSum=r=>r?FIELDS.reduce((t,f)=>t+(Number(r[f])||0),0):0;
 // 本機設定檔（sheet-config.js）的預設值新增了欄位（例如後來才加的科部）時，把還沒填過的欄位補成明確數字、
@@ -1845,6 +1902,7 @@ function mergeRemote(rm){
   }
   if(rc.big&&(rc.big.t||0)>((c.big&&c.big.t)||0)){ c.big={on:!!rc.big.on,min:Number(rc.big.min)||0,t:rc.big.t}; ch=true; }   // 單筆通知的設定：整份看修改時間
   if(rc.brand&&rc.brand.m&&(rc.brand.t||0)>((c.brand&&c.brand.t)||0)){ c.brand={m:Object.assign({},rc.brand.m),t:rc.brand.t}; ch=true; }   // 各品項的廠牌：整份看修改時間
+  if(rc.lock&&rc.lock.url&&rc.lock.key&&(rc.lock.t||0)>((c.lock&&c.lock.t)||0)){ c.lock={url:rc.lock.url,key:rc.lock.key,t:rc.lock.t}; ch=true; }   // 月份鎖住的網址與金鑰
   state.led=state.led||{};
   Object.keys(rm.led||{}).forEach(id=>{ const a=rm.led[id], b=state.led[id]; if(a&&(!b||(a.t||0)>(b.t||0))){ state.led[id]=a; ch=true; } });   // 醫師累積點數的紀錄：逐筆看修改時間
   Object.keys(rm.pay||{}).forEach(k=>{
@@ -1902,6 +1960,7 @@ async function syncNow(){
     if(applyDefaults()) ch=true;   // 先併完雲端再補預設值，才不會蓋掉別台裝置剛改的數字
     if(applyHistory()) ch=true;
     if(applyUrlVer()) ch=true;
+    if(applyLockVer()) ch=true;
     if(ch){ saveState(true); renderAll(); }
     const mine=buildPayload();
     if(!remote||stable(mine)!==stable(remote)) await cloudReq('PUT',await seal(mine));
@@ -2233,6 +2292,7 @@ function act(a,t,ev){
   }
   else if(a==='big-ok') bigAck();
   else if(a==='inv-ev') showInvEv(k);
+  else if(a==='lock'||a==='unlock'){ if(!lockBusy) setLock(k,a==='lock'); }
   else if(a==='inv-ok'){ const s=invSummary(); if(!s||!s.lastCnt) return;
     const ok=invAcked().concat(invEvKey(s.lastCnt)).slice(-50); try{ localStorage.setItem(LS_INV_OK,JSON.stringify(ok)); }catch(e){} renderAlerts(); }
   else if(a==='big-perm'){ try{ const q=Notification.requestPermission(()=>renderAll()); if(q&&q.then) q.then(()=>renderAll()); }catch(e){} }
@@ -2450,7 +2510,7 @@ if(VIEW){
   loadView();
   setInterval(()=>{ if(document.visibilityState==='visible'){ loadView(); refresh(true); } },60*1000);
 }else{
-  if(!sync){ const a=applyDefaults(), b=applyHistory(), u=applyUrlVer(); if(a||b||u) saveState(true); }
+  if(!sync){ const a=applyDefaults(), b=applyHistory(), u=applyUrlVer(), l=applyLockVer(); if(a||b||u||l) saveState(true); }
   renderAll();
   renderSync();
   refresh(true);
