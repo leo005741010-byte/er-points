@@ -269,7 +269,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.20b';
+const APP_VER='2026.11.20c';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -448,7 +448,7 @@ function rateOf(cfg,pid,live){
 }
 function calcMonth(key,cfgOverride){
   const md=state.data.months[key], cfg=cfgOverride||monthCfg(key), live=ratesFor(key), rc={};
-  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,fund:0,fundIt:{},vendor:0,units:0,sales:0,cost:0,noPrice:{},zeroRate:{},bv:{},bs:{}};   // bv／bs＝各廠牌的總點數／品項總點數（'' 是還沒選廠牌的品項）
+  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,poolB:{},fund:0,fundIt:{},vendor:0,units:0,sales:0,cost:0,noPrice:{},zeroRate:{},bv:{},bs:{}};   // poolB＝各廠牌放進平分池的點數   // bv／bs＝各廠牌的總點數／品項總點數（'' 是還沒選廠牌的品項）
   c.rows.forEach(r=>Object.keys(r.it).forEach(pid=>{
     const q=r.it[pid], rt=rc[pid]||(rc[pid]=rateOf(cfg,pid,live)), bk=brandOf(pid);
     if(!cfg.products[pid]||!(rt.doc+rt.promo+rt.pool+rt.fund)) c.zeroRate[pid]=1;
@@ -458,16 +458,27 @@ function calcMonth(key,cfgOverride){
     c.bv[bk]=(c.bv[bk]||0)+q*(rt.doc+rt.promo+rt.pool+rt.fund);
     c.bs[bk]=(c.bs[bk]||0)+q*rt.price;   // 各廠牌的品項總點數
     const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0,sales:0}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc; d.sales+=q*rt.price;
-    const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=q*rt.promo;
-    c.pool+=q*rt.pool; c.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
+    const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0,promoB:{}}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=q*rt.promo;
+    n.promoB[bk]=(n.promoB[bk]||0)+q*rt.promo;   // 各廠牌的主要點數
+    c.pool+=q*rt.pool; c.poolB[bk]=(c.poolB[bk]||0)+q*rt.pool; c.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
     if(rt.fund){ c.fund+=q*rt.fund; c.fundIt[pid]=(c.fundIt[pid]||0)+q; }
   }));
   // 平分池：整池除以名單人數，除不盡的零頭不計（列在提醒）
   const N=cfg.sharers.length;
   c.share=N?Math.floor(c.pool/N):0; c.poolLeft=c.pool-c.share*N;
   c.fund+=c.poolLeft;   // 除不盡的零頭（名單是空的時就是整池）歸到科部
-  cfg.sharers.forEach(nm=>{ (c.np[nm]||(c.np[nm]={it:{},promo:0,share:0})).share=c.share; });
+  cfg.sharers.forEach(nm=>{ (c.np[nm]||(c.np[nm]={it:{},promo:0,share:0,promoB:{}})).share=c.share; });
   return c;
+}
+// 專師的點數分廠牌：該廠牌品項的主要點數＋該廠牌放進平分池的點數÷平分人數。
+// 各廠牌各自無條件捨去，加起來和合計差的零頭放進最大的那一個廠牌，讓兩邊加起來＝合計
+function npByBrand(c,name,amt){
+  const p=c.np[name]||{}, N=c.cfg.sharers.length, inPool=N&&c.cfg.sharers.includes(name), o={};
+  [...new Set([...Object.keys(c.poolB),...Object.keys(p.promoB||{})])].forEach(b=>{
+    o[b]=Math.round((p.promoB||{})[b]||0)+(inPool?Math.floor((c.poolB[b]||0)/N):0); });
+  const diff=amt-sumVals(o);
+  if(diff){ const top=Object.keys(o).sort((x,y)=>o[y]-o[x])[0]; if(top!=null) o[top]+=diff; else o['']=diff; }
+  return o;
 }
 // 這個月有紀錄的品項（依設定表的順序；設定表還沒有的新品項排最後）
 function monthPids(c){
@@ -480,7 +491,8 @@ function people(c){
   Object.keys(c.doc).forEach(n=>{ const d=c.doc[n];
     out.push({role:'d',name:n,pk:'d|'+n,it:d.it,promo:0,share:0,amt:Math.round(d.amt),sales:Math.round(d.sales||0),payable:!!n}); });
   Object.keys(c.np).forEach(n=>{ const p=c.np[n];
-    out.push({role:'n',name:n,pk:'n|'+n,it:p.it,promo:Math.round(p.promo),share:p.share,amt:Math.round(p.promo)+p.share,payable:!!n}); });
+    const amt=Math.round(p.promo)+p.share;
+    out.push({role:'n',name:n,pk:'n|'+n,it:p.it,promo:Math.round(p.promo),share:p.share,amt,bb:npByBrand(c,n,amt),payable:!!n}); });
   if(c.fund>0) out.push({role:'f',name:'科部',pk:FUND_PK,it:c.fundIt,promo:0,share:0,amt:Math.round(c.fund),payable:true});
   out.forEach(p=>seen[p.pk]=1);
   // 已註記確認、但現在試算表算不到的人（事後改了姓名／刪了列）仍要列出來
@@ -841,6 +853,30 @@ function applyLockVer(){
   state.cfg.lock={url:window.COMMISSION_LOCK_URL,key:window.COMMISSION_LOCK_KEY,t:Date.now()}; state.cfg.lockV=v;
   return true;
 }
+// 本機設定檔交代的一次性調整（各有自己的 VERSION，每個版本只做一次，做完跟著加密雲端同步到其他裝置）：
+//  ・COMMISSION_SHARERS_DROP：從平分名單拿掉的人（名單原本跟著試算表時，改成固定為「目前名單減掉這些人」）
+//  ・COMMISSION_RATE_PATCH：指定品項的每件點數，套到最初的設定和每個月自己的那一組（已確認的月份照當時的快照不動）；
+//    銀泡棉(小)還沒選廠牌時跟著銀泡棉(大)
+function applyPatches(){
+  const c=state.cfg, now=Date.now(); let ch=false;
+  const dv=window.COMMISSION_SHARERS_DROP_VERSION, drop=window.COMMISSION_SHARERS_DROP;
+  if(dv&&Array.isArray(drop)&&c.sharersDropV!==dv){
+    const cur=liveSharers(), next=cur.filter(n=>!drop.includes(n));
+    if(cur.length){   // 名單還沒讀到（新裝置、試算表還沒讀）就先不做，下次再套
+      if(next.length!==cur.length){ c.sharers=next; c.tS=now; }
+      c.sharersDropV=dv; ch=true;
+    }
+  }
+  const rv=window.COMMISSION_RATE_PATCH_VERSION, rp=window.COMMISSION_RATE_PATCH;
+  if(rv&&rp&&c.ratePatchV!==rv){
+    const put=o=>Object.keys(rp).forEach(pid=>{ const u=o[pid]||(o[pid]={}); Object.keys(rp[pid]).forEach(f=>{ if(FIELDS.includes(f)) u[f]=Math.max(0,Number(rp[pid][f])||0); }); });
+    put(c.rates); c.tR=now;
+    Object.keys(c.rateSets||{}).forEach(k=>{ const st=c.rateSets[k]; if(!st||st.del) return; st.r=st.r||{}; put(st.r); st.t=now; });
+    if(c.brand&&c.brand.m&&!c.brand.m.silverS&&c.brand.m.silver){ c.brand.m.silverS=c.brand.m.silver; c.brand.t=now; }
+    c.ratePatchV=rv; ch=true;
+  }
+  return ch;
+}
 function lockApi(params,timeoutMs){
   const l=lockCfg(); if(!l) return Promise.reject(new Error('還沒設定'));
   return new Promise((resolve,reject)=>{
@@ -949,10 +985,12 @@ async function refresh(silent,full){
     fail=null; if(r.delta) delta={txt:r.delta,at:Date.now()};
     const ic=VIEW?false:await refreshInv(url);   // 庫存（只有主任頁）；讀失敗不影響點數
     const lc=VIEW?false:await refreshLocks();    // 哪幾個月鎖住了（只有主任頁）
+    const pc=VIEW?false:applyPatches();          // 名單讀到之後才能套的一次性調整
+    if(pc) saveState();
     busy=false;
     loadSched();
-    if(r.changed) publishViews();
-    if(r.changed||ic||lc||!silent||!cur) renderAll(); else renderStatus();
+    if(r.changed||pc) publishViews();
+    if(r.changed||ic||lc||pc||!silent||!cur) renderAll(); else renderStatus();
   }catch(e){
     busy=false; fail={at:new Date().toISOString(),msg:(e&&e.message)||String(e)};
     renderStatus(); if(!silent) alert('讀取試算表失敗：'+fail.msg+'\n\n畫面上保留的是上次讀到的資料。');
@@ -1149,12 +1187,16 @@ function renderMonth(){
       `<td class="st"><button class="btn mini${x.can?'':' ghost'}" data-act="led" data-k="${esc(x.pk)}">${x.can?'記一筆':'看紀錄'}</button></td></tr>`).join('')||'<tr><td class="l mut" colspan="6">還沒有紀錄</td></tr>')+
     (cums.length?`<tr class="tot"><td class="l nmc">合計</td><td class="n sub" data-l="累積">${fmt(cT('total'))}</td><td class="n sub" data-l="已確認">${fmt(cT('paid'))}</td><td class="amt">${fmt(cT('left'))}</td><td class="n sub" data-l="可確認">${fmt(cT('can'))}</td><td class="st"></td></tr>`:'')+
     `</tbody></table></div></details>`;
-  // 專師
+  // 專師（有選廠牌時，點數另外分成各廠牌的點數：該廠牌品項的主要＋該廠牌平分池÷平分人數）
+  const nbs=brandList().length?[...brandList(),''].filter(b=>nps.some(p=>(p.bb||{})[b])):[];
+  const bName=b=>`${b||'未選廠牌'}點數`;
+  const bTd=(p,v)=>nbs.map(b=>`<td class="n sub" data-l="${esc(bName(b))}">${fmt((v||{})[b]||0)}</td>`).join('');
+  const bTot={}; nps.forEach(p=>nbs.forEach(b=>bTot[b]=(bTot[b]||0)+((p.bb||{})[b]||0)));
   h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`${allBtn('n','專師')?`<div class="sec-head">${allBtn('n','專師')}</div>`:''}
     ${npMix?`<div class="mixh">各專師的占比</div>${npMix}<div class="mixh" style="margin-top:12px">明細</div>`:''}
-    <div class="tw"><table class="ppl"><thead><tr><th class="l">專師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>主要點數</th><th>平分</th><th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
-    (nps.length?nps.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="n sub" data-l="主要">${fmt(p.promo)}</td><td class="n sub" data-l="＋平分">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
-    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="n sub" data-l="主要">${fmt(promoTot)}</td><td class="n sub" data-l="＋平分">${fmt(nTot-promoTot)}</td><td class="amt">${fmt(nTot)}</td><td class="st"></td></tr></tbody></table></div>`);
+    <div class="tw"><table class="ppl"><thead><tr><th class="l">專師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>主要點數</th><th>平分</th>${nbs.map(b=>`<th>${esc(bName(b))}</th>`).join('')}<th>合計</th><th class="l">確認</th></tr></thead><tbody>`+
+    (nps.length?nps.map(p=>row(p,pids.map(pid=>qtd(p.it[pid],pid)).join('')+`<td class="n sub" data-l="主要">${fmt(p.promo)}</td><td class="n sub" data-l="＋平分">${fmt(p.share)}</td>${bTd(p,p.bb)}<td class="amt">${fmt(p.amt)}</td>`)).join(''):`<tr><td class="l mut" colspan="${pids.length+5+nbs.length}">本月沒有紀錄</td></tr>`)+
+    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="n sub" data-l="主要">${fmt(promoTot)}</td><td class="n sub" data-l="＋平分">${fmt(nTot-promoTot)}</td>${bTd(null,bTot)}<td class="amt">${fmt(nTot)}</td><td class="st"></td></tr></tbody></table></div>`);
   // 科部（不屬於個人的部分）
   if(fp){
     const fpids=pids.filter(pid=>fp.it[pid]);
@@ -1961,6 +2003,7 @@ async function syncNow(){
     if(applyHistory()) ch=true;
     if(applyUrlVer()) ch=true;
     if(applyLockVer()) ch=true;
+    if(applyPatches()) ch=true;
     if(ch){ saveState(true); renderAll(); }
     const mine=buildPayload();
     if(!remote||stable(mine)!==stable(remote)) await cloudReq('PUT',await seal(mine));
@@ -2510,7 +2553,7 @@ if(VIEW){
   loadView();
   setInterval(()=>{ if(document.visibilityState==='visible'){ loadView(); refresh(true); } },60*1000);
 }else{
-  if(!sync){ const a=applyDefaults(), b=applyHistory(), u=applyUrlVer(), l=applyLockVer(); if(a||b||u||l) saveState(true); }
+  if(!sync){ const a=applyDefaults(), b=applyHistory(), u=applyUrlVer(), l=applyLockVer(), p=applyPatches(); if(a||b||u||l||p) saveState(true); }
   renderAll();
   renderSync();
   refresh(true);
