@@ -269,7 +269,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.20c';
+const APP_VER='2026.11.20d';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -420,7 +420,18 @@ function ratesFor(key){
     FIELDS.forEach(f=>{ if(u[f]!=null&&u[f]!=='') o[pid][f]=Math.max(0,Number(u[f])||0); }); });
   return o;
 }
-function cfgFor(key){ return {products:ratesFor(key),sharers:liveSharers()}; }
+// 平分池分組：有自己平分名單的廠牌（cfg.bShare）各自一組（組名＝廠牌），其餘品項都在預設那一組（平分名單）。
+// 個人頁沒有廠牌與名單，用主任放上來的分組（組名是代號、名單只有人數，見 viewBlob／applyView）
+function poolGroups(){
+  if(VIEW) return state.cfg.vg||null;
+  const bs=(state.cfg.bShare&&state.cfg.bShare.m)||{}, pg={}, groups={};
+  productList().forEach(p=>{ const b=brandOf(p.id); if(b&&Array.isArray(bs[b])&&bs[b].length){ pg[p.id]=b; groups[b]=bs[b].slice(); } });
+  return Object.keys(pg).length?{pg,groups}:null;
+}
+function cfgFor(key){ const o={products:ratesFor(key),sharers:liveSharers()}, g=poolGroups(); if(g){ o.pg=g.pg; o.groups=g.groups; } return o; }
+const poolGroupOf=(cfg,pid)=>(cfg&&cfg.pg&&cfg.pg[pid])||'';   // ''＝預設那一組
+const groupMembers=(cfg,g)=>g?(((cfg.groups||{})[g])||[]):cfg.sharers;
+const inAnyPool=(cfg,name)=>cfg.sharers.includes(name)||Object.values(cfg.groups||{}).some(S=>S.includes(name));
 // 有確認紀錄的月份用當時固定下來的設定（pm.cfg）；其餘照 cfgFor
 function monthCfg(key){ const pm=state.pay[key]; return (pm&&pm.cfg)||cfgFor(key); }
 // 表格上要顯示的：這個月實際在用的每件點數
@@ -448,7 +459,7 @@ function rateOf(cfg,pid,live){
 }
 function calcMonth(key,cfgOverride){
   const md=state.data.months[key], cfg=cfgOverride||monthCfg(key), live=ratesFor(key), rc={};
-  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,poolB:{},fund:0,fundIt:{},vendor:0,units:0,sales:0,cost:0,noPrice:{},zeroRate:{},bv:{},bs:{}};   // poolB＝各廠牌放進平分池的點數   // bv／bs＝各廠牌的總點數／品項總點數（'' 是還沒選廠牌的品項）
+  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,poolG:{},poolBm:{},fund:0,fundIt:{},vendor:0,units:0,sales:0,cost:0,noPrice:{},zeroRate:{},bv:{},bs:{}};   // poolG＝各平分組的池；poolBm＝預設那一組的池按廠牌分   // bv／bs＝各廠牌的總點數／品項總點數（'' 是還沒選廠牌的品項）
   c.rows.forEach(r=>Object.keys(r.it).forEach(pid=>{
     const q=r.it[pid], rt=rc[pid]||(rc[pid]=rateOf(cfg,pid,live)), bk=brandOf(pid);
     if(!cfg.products[pid]||!(rt.doc+rt.promo+rt.pool+rt.fund)) c.zeroRate[pid]=1;
@@ -460,22 +471,27 @@ function calcMonth(key,cfgOverride){
     const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0,sales:0}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc; d.sales+=q*rt.price;
     const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0,promoB:{}}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=q*rt.promo;
     n.promoB[bk]=(n.promoB[bk]||0)+q*rt.promo;   // 各廠牌的主要點數
-    c.pool+=q*rt.pool; c.poolB[bk]=(c.poolB[bk]||0)+q*rt.pool; c.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
+    const g=poolGroupOf(cfg,pid); c.poolG[g]=(c.poolG[g]||0)+q*rt.pool; if(!g) c.poolBm[bk]=(c.poolBm[bk]||0)+q*rt.pool;
+    c.pool+=q*rt.pool; c.vendor+=q*(rt.doc+rt.promo+rt.pool+rt.fund);
     if(rt.fund){ c.fund+=q*rt.fund; c.fundIt[pid]=(c.fundIt[pid]||0)+q; }
   }));
-  // 平分池：整池除以名單人數，除不盡的零頭不計（列在提醒）
-  const N=cfg.sharers.length;
-  c.share=N?Math.floor(c.pool/N):0; c.poolLeft=c.pool-c.share*N;
-  c.fund+=c.poolLeft;   // 除不盡的零頭（名單是空的時就是整池）歸到科部
-  cfg.sharers.forEach(nm=>{ (c.np[nm]||(c.np[nm]={it:{},promo:0,share:0,promoB:{}})).share=c.share; });
+  // 平分池：各組的池除以該組名單人數（預設那一組＝平分名單），除不盡的零頭（名單是空的時就是整池）歸到科部
+  c.shareG={}; c.poolLeft=0;
+  [...new Set(['',...Object.keys(c.poolG)])].forEach(g=>{
+    const S=groupMembers(cfg,g), N=S.length, p=c.poolG[g]||0, sh=N?Math.floor(p/N):0;
+    c.shareG[g]=sh; c.poolLeft+=p-sh*N;
+    S.forEach(nm=>{ (c.np[nm]||(c.np[nm]={it:{},promo:0,share:0,promoB:{}})).share+=sh; }); });
+  c.share=c.shareG['']||0;   // 預設那一組每人的平分
+  c.fund+=c.poolLeft;
   return c;
 }
-// 專師的點數分廠牌：該廠牌品項的主要點數＋該廠牌放進平分池的點數÷平分人數。
-// 各廠牌各自無條件捨去，加起來和合計差的零頭放進最大的那一個廠牌，讓兩邊加起來＝合計
+// 專師的點數分廠牌：該廠牌品項的主要點數＋平分。平分：有自己平分組的廠牌＝那一組每人的平分；
+// 其他廠牌＝該廠牌在預設那一組的池÷平分名單人數（各自無條件捨去，和合計差的零頭放進最大的那一個廠牌，兩邊加起來＝合計）
 function npByBrand(c,name,amt){
-  const p=c.np[name]||{}, N=c.cfg.sharers.length, inPool=N&&c.cfg.sharers.includes(name), o={};
-  [...new Set([...Object.keys(c.poolB),...Object.keys(p.promoB||{})])].forEach(b=>{
-    o[b]=Math.round((p.promoB||{})[b]||0)+(inPool?Math.floor((c.poolB[b]||0)/N):0); });
+  const p=c.np[name]||{}, cfg=c.cfg, S=cfg.sharers, o={};
+  Object.keys(p.promoB||{}).forEach(b=>{ o[b]=(o[b]||0)+Math.round(p.promoB[b]); });
+  if(S.length&&S.includes(name)) Object.keys(c.poolBm).forEach(b=>{ o[b]=(o[b]||0)+Math.floor(c.poolBm[b]/S.length); });
+  Object.keys(c.shareG).forEach(g=>{ if(g&&groupMembers(cfg,g).includes(name)) o[g]=(o[g]||0)+c.shareG[g]; });
   const diff=amt-sumVals(o);
   if(diff){ const top=Object.keys(o).sort((x,y)=>o[y]-o[x])[0]; if(top!=null) o[top]+=diff; else o['']=diff; }
   return o;
@@ -516,10 +532,10 @@ const todayKey=()=>{ const d=new Date(); return `${d.getFullYear()-1911}-${pad(d
 // 今天新增的紀錄（看當月分頁裡日期是今天的列）與它們的點數
 function todayInfo(){
   const d=new Date(), key=todayKey(), md=`${d.getMonth()+1}/${d.getDate()}`, c=calcMonth(key), live=ratesFor(key);
-  const t={key,md,c,live,rows:c.rows.filter(r=>r.d===md),each:[],units:0,sales:0,promo:0,pool:0};
+  const t={key,md,c,live,rows:c.rows.filter(r=>r.d===md),each:[],units:0,sales:0,promo:0,pool:0,poolG:{}};
   t.rows.forEach(r=>{ let sum=0;   // each＝這一筆的品項點數（件數×品項點數）
-    Object.keys(r.it).forEach(pid=>{ const q=r.it[pid], rt=rateOf(c.cfg,pid,live);
-      t.units+=q; t.promo+=q*rt.promo; t.pool+=q*rt.pool; sum+=q*rt.price; });
+    Object.keys(r.it).forEach(pid=>{ const q=r.it[pid], rt=rateOf(c.cfg,pid,live), g=poolGroupOf(c.cfg,pid);
+      t.units+=q; t.promo+=q*rt.promo; t.pool+=q*rt.pool; t.poolG[g]=(t.poolG[g]||0)+q*rt.pool; sum+=q*rt.price; });
     t.each.push(sum); t.sales+=sum; });
   return t;
 }
@@ -532,8 +548,11 @@ function todayMine(name){
   }
   const rows=t.rows.filter(r=>r.np===name), each=rows.map(r=>Object.keys(r.it).reduce((x,pid)=>x+r.it[pid]*rateOf(c.cfg,pid,t.live).promo,0));
   const promo=each.reduce((a,b)=>a+b,0);
-  const share=N&&c.cfg.sharers.includes(name)?c.share-Math.floor((c.pool-t.pool)/N):0;   // 用「現在每人的平分」減「不含今天時每人的平分」，和月合計對得起來
-  return {t,rows,each,promo,share,total:promo+share,N,inPool:c.cfg.sharers.includes(name)};
+  // 用「現在每人的平分」減「不含今天時每人的平分」（各平分組分開算），和月合計對得起來
+  let share=0;
+  Object.keys(c.shareG).forEach(g=>{ const S=groupMembers(c.cfg,g); if(!S.length||!S.includes(name)) return;
+    share+=c.shareG[g]-Math.floor(((c.poolG[g]||0)-(t.poolG[g]||0))/S.length); });
+  return {t,rows,each,promo,share,total:promo+share,N,inPool:inAnyPool(c.cfg,name)};
 }
 // 某個月每天各加了多少（val(r,c)＝這一筆要算的值）：當月算到今天，其他月份算到月底。
 // 沒有日期或日期不在這個月的列算在 1 日（odd）；日期在今天之後的不算（late）
@@ -854,18 +873,16 @@ function applyLockVer(){
   return true;
 }
 // 本機設定檔交代的一次性調整（各有自己的 VERSION，每個版本只做一次，做完跟著加密雲端同步到其他裝置）：
-//  ・COMMISSION_SHARERS_DROP：從平分名單拿掉的人（名單原本跟著試算表時，改成固定為「目前名單減掉這些人」）
+//  ・COMMISSION_BRAND_SHARERS：{廠牌:[姓名…]}——這個廠牌的品項另外用自己的平分名單（其他品項照原本的平分名單）
 //  ・COMMISSION_RATE_PATCH：指定品項的每件點數，套到最初的設定和每個月自己的那一組（已確認的月份照當時的快照不動）；
 //    銀泡棉(小)還沒選廠牌時跟著銀泡棉(大)
 function applyPatches(){
   const c=state.cfg, now=Date.now(); let ch=false;
-  const dv=window.COMMISSION_SHARERS_DROP_VERSION, drop=window.COMMISSION_SHARERS_DROP;
-  if(dv&&Array.isArray(drop)&&c.sharersDropV!==dv){
-    const cur=liveSharers(), next=cur.filter(n=>!drop.includes(n));
-    if(cur.length){   // 名單還沒讀到（新裝置、試算表還沒讀）就先不做，下次再套
-      if(next.length!==cur.length){ c.sharers=next; c.tS=now; }
-      c.sharersDropV=dv; ch=true;
-    }
+  const bv=window.COMMISSION_BRAND_SHARERS_VERSION, bsp=window.COMMISSION_BRAND_SHARERS;
+  if(bv&&bsp&&c.bShareV!==bv){
+    c.bShare={m:Object.assign({},(c.bShare&&c.bShare.m)||{}),t:now};
+    Object.keys(bsp).forEach(b=>{ c.bShare.m[b]=(bsp[b]||[]).map(normName).filter(Boolean); });
+    c.bShareV=bv; ch=true;
   }
   const rv=window.COMMISSION_RATE_PATCH_VERSION, rp=window.COMMISSION_RATE_PATCH;
   if(rv&&rp&&c.ratePatchV!==rv){
@@ -1152,7 +1169,7 @@ function renderMonth(){
     <div class="tile clk" data-act="trend" data-m="diff" role="button"><span class="tg">📈</span><div class="l">總點數差</div><div class="v">${fmt(c.sales-c.cost)}</div><div class="s">品項總點數 − 原始總點數</div></div>
     <div class="tile clk" data-act="trend" data-m="rebate" role="button"><span class="tg">📈</span><div class="l">折讓點數</div><div class="v">${fmt(c.cost-c.vendor)}</div><div class="s">${c.cost?vsPrevHtml('rebate',cur):'還沒填原始點數'}</div></div>
     <div class="tile"><div class="l">醫師點數合計</div><div class="v">${fmt(dTot)}</div><div class="s">${docs.filter(p=>p.amt>0).length} 位</div></div>
-    <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">主要 ${fmt(promoTot)}＋平分 ${fmt(c.share*c.cfg.sharers.length)}</div></div>
+    <div class="tile"><div class="l">專師點數合計</div><div class="v">${fmt(nTot)}</div><div class="s">主要 ${fmt(promoTot)}＋平分 ${fmt(nTot-promoTot)}</div></div>
     ${fp?`<div class="tile"><div class="l">科部</div><div class="v">${fmt(fp.amt)}</div><div class="s">不屬於個人</div></div>`:''}
     <div class="tile ${t.unpaid?'due':'ok'}"><div class="l">${t.unpaid?'還沒確認':'確認進度'}</div><div class="v">${t.unpaid?fmt(t.unpaid):(t.due?'全部確認':'—')}</div>
       <div class="s">專師${fp?'＋科部':''}　已確認 ${fmt(t.paid)}／共 ${fmt(t.due)}${t.over?`（多 ${fmt(t.over)}）`:''}</div><div class="bar"><span style="width:${t.due?Math.min(100,t.paid/t.due*100):0}%"></span></div></div>
@@ -1276,7 +1293,14 @@ function renderRates(){
     <h3>專師平分名單（<span class="cfg-n">${N}</span> 位）</h3>
     <div class="chips">${sh.map(n=>`<span class="chip">${esc(n)}<button title="移出名單" data-act="sharer-del" data-n="${esc(n)}">×</button></span>`).join('')||'<span class="mut">（空的）</span>'}</div>
     <div class="row"><input type="text" id="sharer-new" placeholder="新增姓名" style="width:130px"><button class="btn mini outline" data-act="sharer-add">＋加入</button>
-      ${auto?'<span class="mut" style="font-size:12.5px">目前跟著試算表「統計」頁的專師名單</span>':'<button class="btn mini ghost" data-act="sharer-reset">↺ 改回跟著試算表統計頁名單</button>'}</div>`;
+      ${auto?'<span class="mut" style="font-size:12.5px">目前跟著試算表「統計」頁的專師名單</span>':'<button class="btn mini ghost" data-act="sharer-reset">↺ 改回跟著試算表統計頁名單</button>'}</div>`+
+    // 各廠牌的品項可以另外用自己的平分名單（例：某廠牌只給有在推的幾位平分）
+    brandList().map((b,i)=>{ const L=((state.cfg.bShare&&state.cfg.bShare.m)||{})[b];
+      if(!Array.isArray(L)||!L.length) return `<div class="row" style="margin-top:8px"><button class="btn mini ghost" data-act="bsh-new" data-b="${esc(b)}">＋ ${esc(b)}品項另外設平分名單</button></div>`;
+      return `<h3 style="margin-top:14px">${esc(b)}品項的平分名單（<span class="cfg-n">${L.length}</span> 位）</h3>
+        <div class="chips">${L.map(n=>`<span class="chip">${esc(n)}<button title="移出名單" data-act="bsh-del" data-b="${esc(b)}" data-n="${esc(n)}">×</button></span>`).join('')}</div>
+        <div class="row"><input type="text" id="bsh-new-${i}" placeholder="新增姓名" style="width:130px"><button class="btn mini outline" data-act="bsh-add" data-b="${esc(b)}" data-i="${i}">＋加入</button>
+          <button class="btn mini ghost" data-act="bsh-reset" data-b="${esc(b)}">↺ 改回用上面的平分名單</button></div>`; }).join('');
   }
   renderRateSave(); renderRatesNote();
 }
@@ -1479,9 +1503,11 @@ const CUM={
       for(let d=1;d<=ds.D;d++) cum[d]=cum[d-1]+ds.sum[d];
       return {ds,cum}; }
     const ds=dailySums(key,(r,c)=>r.np===name?rowVal(r,c,live,'promo'):0);
-    const pool=dailySums(key,(r,c)=>rowVal(r,c,live,'pool')).sum, N=ds.c.cfg.sharers.length, inPool=ds.c.cfg.sharers.includes(name), cum=[0];
-    const cum2=[0];   // 只算主要、不加平分
-    for(let d=1,a=0,b=0;d<=ds.D;d++){ a+=ds.sum[d]; b+=pool[d]; cum2[d]=a; cum[d]=a+(inPool&&N?Math.floor(b/N):0); }
+    // 平分：各平分組的池各自逐日累計，再除以該組人數（本人在那一組才算）
+    const cf=ds.c.cfg, gs=[...new Set(['',...Object.values(cf.pg||{})])].map(g=>{ const S=groupMembers(cf,g);
+      return {N:S.length,in:S.includes(name),sum:dailySums(key,(r,c)=>Object.keys(r.it).reduce((x,pid)=>x+(poolGroupOf(c.cfg,pid)===g?r.it[pid]*rateOf(c.cfg,pid,live).pool:0),0)).sum}; }).filter(x=>x.in&&x.N);
+    const cum=[0], cum2=[0], acc=gs.map(()=>0);   // cum2＝只算主要、不加平分
+    for(let d=1,a=0;d<=ds.D;d++){ a+=ds.sum[d]; cum2[d]=a; let s=0; gs.forEach((x,i)=>{ acc[i]+=x.sum[d]; s+=Math.floor(acc[i]/x.N); }); cum[d]=a+s; }
     return {ds,cum,cum2,legend:['我的點數（主要＋平分）','只算主要（不含平分）']}; },
 };
 // 各指標「某個月 1 日到第 d 天」的累計（給「較上月同期」用）。沒列在這裡的指標（例如每小時）本來就是比率，照舊比整個月
@@ -1578,7 +1604,7 @@ function showTodayMine(){
     (me.rows.map((r,i)=>`<tr><td class="n">${esc(r.n)}</td><td class="l" style="white-space:normal">${its(r)}</td><td class="l">${esc(doc?r.np:r.doc)}</td><td class="n">${fmt(me.each[i])}</td></tr>`).join('')||
      `<tr><td class="l mut" colspan="4">${doc?'今天還沒有你的紀錄':'今天還沒有你為主要的紀錄'}</td></tr>`)+
     (me.rows.length?`<tr class="tot"><td class="l" colspan="3">${doc?'合計':'主要合計'}</td><td class="amt">${fmt(me.promo)}</td></tr>`:'')+`</tbody></table></div>`+
-    (doc?'':`<div class="sub2"><b>平分</b>：今天全體新增 ${t.units} 件，平分池增加 ${fmt(t.pool)} 點，由 ${me.N} 位均分${me.inPool?`，你增加 ${fmt(me.share)} 點`:'（你目前不在平分名單內）'}。</div>`);
+    (doc?'':`<div class="sub2"><b>平分</b>：今天全體新增 ${t.units} 件，平分池增加 ${fmt(t.pool)} 點，${t.c.cfg.pg?'各品項由各自的平分名單':`由 ${me.N} 位`}均分${me.inPool?`，你增加 ${fmt(me.share)} 點`:'（你目前不在平分名單內）'}。</div>`);
   $('mask').classList.add('on');
 }
 
@@ -1890,7 +1916,7 @@ function buildPayload(){
   Object.assign(rates,liveRates());
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm||(!Object.keys(pm.paid||{}).length&&!pm.cfgT)) return;
     pay[k]={paid:pm.paid||{},cfg:pm.cfg||null,cfgT:pm.cfgT||0}; });
-  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{},big:c.big||{on:true,min:5000,t:0},brand:c.brand||null,lock:c.lock||null},pay,led:state.led||{}};
+  return {v:1,cfg:{rates,tR:c.tR||0,sharers:c.sharers,tS:c.tS||0,url:sheetUrl(),tU:c.tU||0,views:c.views||{},rateSets:c.rateSets||{},hist:c.hist||{},big:c.big||{on:true,min:5000,t:0},brand:c.brand||null,lock:c.lock||null,bShare:c.bShare||null},pay,led:state.led||{}};
 }
 const rateSum=r=>r?FIELDS.reduce((t,f)=>t+(Number(r[f])||0),0):0;
 // 本機設定檔（sheet-config.js）的預設值新增了欄位（例如後來才加的科部）時，把還沒填過的欄位補成明確數字、
@@ -1944,6 +1970,7 @@ function mergeRemote(rm){
   }
   if(rc.big&&(rc.big.t||0)>((c.big&&c.big.t)||0)){ c.big={on:!!rc.big.on,min:Number(rc.big.min)||0,t:rc.big.t}; ch=true; }   // 單筆通知的設定：整份看修改時間
   if(rc.brand&&rc.brand.m&&(rc.brand.t||0)>((c.brand&&c.brand.t)||0)){ c.brand={m:Object.assign({},rc.brand.m),t:rc.brand.t}; ch=true; }   // 各品項的廠牌：整份看修改時間
+  if(rc.bShare&&rc.bShare.m&&(rc.bShare.t||0)>((c.bShare&&c.bShare.t)||0)){ c.bShare={m:clone(rc.bShare.m),t:rc.bShare.t}; ch=true; }   // 各廠牌自己的平分名單
   if(rc.lock&&rc.lock.url&&rc.lock.key&&(rc.lock.t||0)>((c.lock&&c.lock.t)||0)){ c.lock={url:rc.lock.url,key:rc.lock.key,t:rc.lock.t}; ch=true; }   // 月份鎖住的網址與金鑰
   state.led=state.led||{};
   Object.keys(rm.led||{}).forEach(id=>{ const a=rm.led[id], b=state.led[id]; if(a&&(!b||(a.t||0)>(b.t||0))){ state.led[id]=a; ch=true; } });   // 醫師累積點數的紀錄：逐筆看修改時間
@@ -2117,13 +2144,19 @@ function viewBlob(key){
     return {v:1,role:'d',name,url:sheetUrl(),rates:docRates(live.products),sets,months,led,big:bigBlob()};
   }
   const live=cfgFor(''), months={}, sets={};
+  // 平分分組：組名（廠牌）換成代號，名單只給人數與本人在不在
+  const vgOf=cfg=>{ if(!cfg||!cfg.pg) return null; const ks=[...new Set(Object.values(cfg.pg))], pg={}, groups={};
+    Object.keys(cfg.pg).forEach(pid=>{ pg[pid]='g'+ks.indexOf(cfg.pg[pid]); });
+    ks.forEach((g,i)=>{ const S=(cfg.groups||{})[g]||[]; groups['g'+i]={n:S.length,in:S.includes(name)}; }); return {pg,groups}; };
   Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=npRates(ratesFor(k)); });
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm) return;
     const m={}, rec=pm.paid&&pm.paid['n|'+name];
-    if(pm.cfg){ m.rates=npRates(pm.cfg.products); m.n=pm.cfg.sharers.length; m.inPool=pm.cfg.sharers.includes(name); }
+    if(pm.cfg){ m.rates=npRates(pm.cfg.products); m.n=pm.cfg.sharers.length; m.inPool=pm.cfg.sharers.includes(name); const vg=vgOf(pm.cfg); if(vg) m.vg=vg; }
     if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
     if(Object.keys(m).length) months[k]=m; });
-  return {v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),sets,n:live.sharers.length,inPool:live.sharers.includes(name),months,big:bigBlob()};
+  const b={v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),sets,n:live.sharers.length,inPool:live.sharers.includes(name),months,big:bigBlob()};
+  const vg=vgOf(live); if(vg) b.vg=vg;
+  return b;
 }
 async function publishViews(){
   if(VIEW||!window.crypto||!crypto.subtle) return;
@@ -2201,13 +2234,14 @@ function applyView(b){
   const full=r=>{ const o={}; Object.keys(r||{}).forEach(pid=>{ o[pid]=doc?{doc:Number(r[pid].doc)||0,promo:0,pool:0,fund:0,price:r[pid].price==null?null:Number(r[pid].price)||0,cost:0}
     :{doc:0,promo:Number(r[pid].promo)||0,pool:Number(r[pid].pool)||0,fund:0,price:r[pid].price==null?null:Number(r[pid].price)||0,cost:0}; }); return o; };
   const pool=(n,inPool)=>{ if(doc) return []; const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
-  state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||'';
+  const vgFull=v=>{ if(!v||!v.pg||doc) return null; const groups={}; Object.keys(v.groups||{}).forEach(g=>{ groups[g]=pool(v.groups[g].n,v.groups[g].in); }); return {pg:v.pg,groups}; };
+  state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||''; state.cfg.vg=vgFull(b.vg);
   state.cfg.big=b.big?{on:!!b.big.on,min:Number(b.big.min)||0,p:b.big.p||{}}:{on:false,min:0,p:{}};   // 主任那邊還是舊版放的內容就沒有這一段：先不通知
   state.cfg.rateSets={}; Object.keys(b.sets||{}).forEach(k=>{ state.cfg.rateSets[k]={r:full(b.sets[k]),t:0}; });
   state.pay={}; state.led={};
   (doc?b.led||[]:[]).forEach((r,i)=>{ state.led['v'+i]={pk:'d|'+b.name,amt:Number(r.amt)||0,at:r.at||'',note:r.note||'',t:1}; });
   Object.keys(b.months||{}).forEach(k=>{ const m=b.months[k], pm=state.pay[k]={paid:{}};
-    if(m.rates) pm.cfg={products:full(m.rates),sharers:pool(m.n,m.inPool)};
+    if(m.rates){ pm.cfg={products:full(m.rates),sharers:pool(m.n,m.inPool)}; const vg=vgFull(m.vg); if(vg){ pm.cfg.pg=vg.pg; pm.cfg.groups=vg.groups; } }
     if(m.paid) pm.paid[(doc?'d|':'n|')+b.name]={amt:m.paid.amt,at:m.paid.at,t:1}; });
 }
 async function loadView(){
@@ -2252,6 +2286,7 @@ function renderMe(ks){
   const hrTxt=hrs==null?'還沒讀到班表':`上班 ${hrs} 小時${cur===todayKey()?'（算到今天）':''}`;
   // 點數說明：這個月適用的各品項每件點數（專師：主要＝負責那一件的人拿的、平分＝每件另外給全體平分名單均分的；醫師：就是醫師那一欄）
   const N=c.cfg.sharers.length, f=doc?'doc':'promo';
+  const grpTxt=c.cfg.pg?`${N} 位（部分品項另有自己的平分名單）`:`${N} 位`;
   const expl=[...new Set([...productList().map(x=>x.id),...Object.keys(c.cfg.products||{})])]
     .map(pid=>({pid,r:rateOf(c.cfg,pid)})).filter(x=>doc?x.r.doc:(x.r.promo||x.r.pool));
   const paidTxt=p.rec?`<span class="tag ok">✓ 已確認 ${shortDate(p.rec.at)}　${fmt(p.rec.amt)} 點</span>`+
@@ -2289,11 +2324,12 @@ function renderMe(ks){
       (expl.map(x=>`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.doc)}</td></tr>`).join('')||
        '<tr><td class="l mut" colspan="2">還沒有設定</td></tr>')+`</tbody></table></div>
       <div class="sub2">這個月：你的各品項件數 × 上表的點數，加起來＝ ${fmt(p.amt)} 點。</div></details>`
-    :`<div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>主要</th><th>平分</th><th>平分每人（÷${N} 位）</th></tr></thead><tbody>`+
-      (expl.map(x=>`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.promo)}</td><td class="n">${fmt(x.r.pool)}</td><td class="n">${N?fmt2(x.r.pool/N):'—'}</td></tr>`).join('')||
+    :`<div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>主要</th><th>平分</th><th>平分每人</th></tr></thead><tbody>`+
+      (expl.map(x=>{ const gN=groupMembers(c.cfg,poolGroupOf(c.cfg,x.pid)).length;
+        return `<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.promo)}</td><td class="n">${fmt(x.r.pool)}</td><td class="n">${gN?fmt2(x.r.pool/gN)+`<small class="mut">（÷${gN}）</small>`:'—'}</td></tr>`; }).join('')||
        '<tr><td class="l mut" colspan="4">還沒有設定</td></tr>')+`</tbody></table></div>
-      <div class="sub2"><b>主要</b>：這一件由你主要負責時，你得到的點數。<b>平分</b>：每一件另外提供、由平分名單上的 ${N} 位均分的點數，不管是誰主要，名單上每個人都有${p.share||!c.pool?'':'（你目前不在平分名單內）'}。<br>
-      這個月：主要 ${fmt(p.promo)} 點（自己主要的件數 × 上表的主要點數）＋平分 ${fmt(p.share)} 點（全體平分池 ${fmt(c.pool)} 點 ÷ ${N} 位）＝ ${fmt(p.amt)} 點。</div></details>`);
+      <div class="sub2"><b>主要</b>：這一件由你主要負責時，你得到的點數。<b>平分</b>：每一件另外提供、由平分名單上的 ${grpTxt} 均分的點數，不管是誰主要，名單上每個人都有${p.share||!c.pool?'':'（你目前不在平分名單內）'}。<br>
+      這個月：主要 ${fmt(p.promo)} 點（自己主要的件數 × 上表的主要點數）＋平分 ${fmt(p.share)} 點（${c.cfg.pg?'各平分池 ÷ 各自的人數':`全體平分池 ${fmt(c.pool)} 點 ÷ ${N} 位`}）＝ ${fmt(p.amt)} 點。</div></details>`);
   const each=r=>Object.keys(r.it).reduce((t,pid)=>t+r.it[pid]*rateOf(c.cfg,pid)[f],0);
   el.innerHTML=`<details class="card sec" data-sec="me-rows"${isOpen('me-rows')?' open':''}><summary><span>${doc?'這個月的明細':'這個月的主要明細'}</span><span class="sum-amt">${rows.length} 筆</span></summary>
       <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">${doc?'主要':'醫師'}</th><th>${doc?'點數':'主要點數'}</th></tr></thead><tbody>`+
@@ -2429,6 +2465,18 @@ function act(a,t,ev){
     state.cfg.sharers=liveSharers().filter(x=>x!==n); state.cfg.tS=Date.now(); saveState(); renderAll();
   }
   else if(a==='sharer-reset'){ state.cfg.sharers=null; state.cfg.tS=Date.now(); saveState(); renderAll(); }
+  else if(/^bsh-/.test(a)){   // 某廠牌品項自己的平分名單
+    const b=t.dataset.b, L=(((state.cfg.bShare&&state.cfg.bShare.m)||{})[b]||[]).slice();
+    const put=list=>{ const m=Object.assign({},(state.cfg.bShare&&state.cfg.bShare.m)||{}); if(list&&list.length) m[b]=list; else delete m[b];
+      state.cfg.bShare={m,t:Date.now()}; saveState(); renderAll(); };
+    if(a==='bsh-new'){ if(confirm(`「${b}」的品項另外設一份平分名單？\n先照目前的平分名單（${liveSharers().length} 位）建立，之後可以加減人。只影響還沒確認過的月份。`)) put(liveSharers()); }
+    else if(a==='bsh-add'){ const inp=$('bsh-new-'+t.dataset.i), n=normName(inp&&inp.value); if(!n) return;
+      if(L.includes(n)){ alert('名單上已經有「'+n+'」'); return; }
+      if(confirm(`把「${n}」加入「${b}」品項的平分名單？\n（只影響還沒確認過的月份）`)) put(L.concat(n)); }
+    else if(a==='bsh-del'){ const n=t.dataset.n;
+      if(confirm(`把「${n}」移出「${b}」品項的平分名單？\n（只影響還沒確認過的月份；他的主要點數照算）`)) put(L.filter(x=>x!==n)); }
+    else if(a==='bsh-reset'){ if(confirm(`「${b}」的品項改回用上面的平分名單？\n（只影響還沒確認過的月份）`)) put(null); }
+  }
   else if(a==='url-save'){
     const v=$('cfg-url').value.trim();
     if(v&&!sheetId(v)){ alert('看起來不是 Google 試算表網址（應該長得像 https://docs.google.com/spreadsheets/d/…）'); return; }
