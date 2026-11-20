@@ -244,6 +244,7 @@ pre.rule{background:#0f2238;color:#e8f0fa;border-radius:8px;padding:10px 12px;fo
   <div id="month-top"></div>
   <details class="card" id="card-rates" data-sec="rates"><summary>✏ 每件點數（可直接修改）</summary><div id="rates-view"></div></details>
   <div id="month-view"></div>
+  <div id="inv-view"></div>
   <details class="card" id="card-year"><summary>年度總覽：每個人每個月的點數與確認狀況</summary><div id="year-view"></div></details>
   <details class="card" id="card-cfg"><summary>⚙ 其他設定：雲端同步／試算表網址／備份</summary><div id="cfg-view"></div></details>
   <div class="foot"><span class="status" id="status"></span><span class="status" id="sync-st" data-act="goto-sync"></span>
@@ -268,7 +269,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.16a';
+const APP_VER='2026.11.20a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -560,7 +561,8 @@ function gviz(id,params,headers,timeoutMs){
   });
 }
 const gcell=c=>c==null?null:(c.v!=null?c.v:(c.f!=null?c.f:null));
-const normLabel=l=>String(l==null?'':l).replace(/\s+/g,'');
+// 表頭第二行小字後面有試算表自動寫的「庫存12」（隨時會變），比對欄名時拿掉
+const normLabel=l=>String(l==null?'':l).replace(/\s+/g,'').replace(/庫存-?\d*$/,'');
 function classify(label){
   const s=normLabel(label); if(!s) return null;
   if(/^(序|序號|編號)$/.test(s)) return {kind:'seq'};
@@ -696,8 +698,8 @@ async function fetchSheet(url,full){
       return {seq:j.map.seq?gcell(c[idx[j.map.seq]]):null, date:j.map.date?parseDate(gcell(c[idx[j.map.date]])):null, cnt,
               np:gcell(c[idx[j.map.np]]), doc:j.map.doc?gcell(c[idx[j.map.doc]]):null,
               k:JSON.stringify(c.map(gcell))}; });   // k＝原始儲存格，只用來比對回聲
-    const rows=all.filter(r=>Object.keys(r.cnt).length);
-    const blank=all.filter(r=>!Object.keys(r.cnt).length&&(normName(r.np)||normName(r.doc)));   // 填了人、沒填數量
+    const rows=all.filter(r=>Object.keys(r.cnt).length&&!isInvRow(r));   // 盤點／補貨列不是使用紀錄
+    const blank=all.filter(r=>!Object.keys(r.cnt).length&&!isInvRow(r)&&(normName(r.np)||normName(r.doc)));   // 填了人、沒填數量
     if(!rows.length) return;
     const ms={}; rows.forEach(r=>{ if(r.date&&r.date.m) ms[r.date.m]=(ms[r.date.m]||0)+1; });
     const domM=Number(Object.keys(ms).sort((a,b)=>ms[b]-ms[a])[0])||null;
@@ -724,6 +726,106 @@ async function fetchSheet(url,full){
   if(!quick) _lay={id,at:now,lay,real};
   return acc;
 }
+// ---------- 庫存（2026-11-20） ----------
+// 盤點／補貨也登記在各月分頁的使用紀錄之間（照時間順序）：「醫師」欄選「盤點」或「補貨」、「專師」欄選人、各品項填數量。
+// 這種列不是使用紀錄，所有點數、件數、筆數都不算它。
+// 庫存由試算表隱藏的「庫存計算」分頁用公式算好（第一次盤點起：盤點＝重設、補貨＋、使用－；盤點時和應有的數量比對），
+// 這裡只讀結果：盤點／補貨那幾列＋最後一列（＝現場存量）。只在主任頁讀，個人頁不讀。
+const INV_RE=/^(盤點|補貨)$/;
+const isInvRow=r=>INV_RE.test(normName(r&&r.doc));
+const INV_SHEET='庫存計算';
+const INV_PIDS=['dressing','scar','glue','repair','film','silver','silverS'];   // 「庫存計算」H～N（數量）、O～U（之後的存量）、V～AB（差異）的品項順序
+const INV_COLS='A,B,D,E,F,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z,AA,AB,AC';
+const LS_INV_OK='erCommission_invOk';   // 這台裝置按過「知道了」的盤點不符提醒
+let invFail=null;
+async function fetchInv(id){
+  const enc=encodeURIComponent;
+  const [ev,last]=await Promise.all([
+    gviz(id,`sheet=${enc(INV_SHEET)}&tq=${enc(`select ${INV_COLS} where E = '盤點' or E = '補貨'`)}`),
+    gviz(id,`sheet=${enc(INV_SHEET)}&tq=${enc('select A,O,P,Q,R,S,T,U order by AD desc limit 1')}`)]);
+  // 分頁不存在時 Google 會回第一個分頁（多半直接報錯，因為沒有 AC、AD 欄）；欄名對不上就當作還沒有庫存表
+  const lb=((ev.table&&ev.table.cols)||[]).map(c=>normLabel(c.label));
+  if(lb[0]!=='日期'||lb[3]!=='類別'||lb[4]!=='專師'||lb[26]!=='結果') throw new Error('試算表的庫存表格式不對');
+  const num=v=>v==null||v===''||isNaN(Number(v))?null:Number(v);
+  const md=v=>{ const d=parseDate(v); return d&&d.m?`${d.m}/${d.d}`:''; };
+  const evs=(ev.table.rows||[]).map(r=>{ const c=r.c||[], g=i=>gcell(c[i]), q={}, st={}, df={};
+    INV_PIDS.forEach((pid,j)=>{ q[pid]=num(g(5+j))||0; st[pid]=num(g(12+j)); df[pid]=num(g(19+j)); });
+    return {d:md(g(0)),tab:normName(g(1)),seq:g(2)==null?'':String(g(2)),type:normName(g(3)),np:normName(g(4)),q,st,df,res:String(g(26)||'').trim()}; });
+  const lr=last.table&&last.table.rows&&last.table.rows[0], now={};
+  if(lr) INV_PIDS.forEach((pid,j)=>{ now[pid]=num(gcell((lr.c||[])[1+j])); });
+  return {ev:evs,now:lr?now:null,nowD:lr?md(gcell((lr.c||[])[0])):''};
+}
+async function refreshInv(url){
+  const id=sheetId(url); if(!id) return false;
+  try{
+    const inv=await fetchInv(id); invFail=null;
+    if(JSON.stringify(inv)===JSON.stringify(state.data.inv||null)) return false;
+    state.data.inv=inv; saveState(true); return true;
+  }catch(e){ const had=!!invFail; invFail=(e&&e.message)||String(e); return !had; }
+}
+// 最近一次盤點、之後的補貨與使用
+function invSummary(){
+  const inv=state.data.inv; if(!inv||!inv.ev) return null;
+  let li=-1; inv.ev.forEach((e,i)=>{ if(e.type==='盤點') li=i; });
+  const lastCnt=li>=0?inv.ev[li]:null, add={};
+  INV_PIDS.forEach(pid=>add[pid]=0);
+  inv.ev.slice(li+1).forEach(e=>{ if(e.type==='補貨') INV_PIDS.forEach(pid=>add[pid]+=e.q[pid]||0); });
+  return {inv,lastCnt,li,add};
+}
+// 盤點結果用 App 自己的品項名稱重組（不用試算表上的文字）：沒有可比對的＝首次盤點
+function invRes(e){
+  if(!e||e.type!=='盤點') return '';
+  const ds=INV_PIDS.filter(pid=>e.df[pid]!=null);
+  if(!ds.length) return '首次盤點';
+  const bad=ds.filter(pid=>e.df[pid]).map(pid=>`${prodName(pid)}${e.df[pid]<0?'少':'多'}${fmt(Math.abs(e.df[pid]))}`);
+  return bad.length?'✗ '+bad.join('、'):'✓ 相符';
+}
+const invBad=e=>!!e&&e.type==='盤點'&&/^✗/.test(invRes(e));
+const invEvKey=e=>[e.d,e.tab,e.seq,e.type].join('|');
+function invAcked(){ try{ return JSON.parse(localStorage.getItem(LS_INV_OK)||'[]'); }catch(e){ return []; } }
+function renderInv(){
+  const el=$('inv-view'); if(!el) return;
+  const s=invSummary();
+  if(VIEW||!cur||!s){ el.innerHTML=''; return; }   // 還沒讀到過庫存表（試算表還沒有「庫存計算」分頁）就不顯示
+  const {inv,lastCnt,add}=s, now=inv.now||{};
+  const tag=!lastCnt?'':invBad(lastCnt)?'<span class="tag no">✗ 盤點不符</span>':invRes(lastCnt)==='✓ 相符'?'<span class="tag ok">✓ 盤點相符</span>':'';
+  const cell=v=>v==null?'<span class="mut">—</span>':`<span${v<0?' style="color:var(--bad);font-weight:700"':''}>${fmt(v)}</span>`;
+  const rows=INV_PIDS.map(pid=>{ const n=lastCnt?now[pid]:null, c0=lastCnt?lastCnt.q[pid]||0:null, a=lastCnt?add[pid]:null;
+    const used=n==null||c0==null?null:c0+a-n;
+    return `<tr><td class="l"><b>${esc(prodName(pid))}</b></td><td class="n" style="font-size:16px">${cell(n)}</td><td class="n">${cell(c0)}</td><td class="n">${cell(a)}</td><td class="n">${cell(used)}</td></tr>`; }).join('');
+  const list=inv.ev.map((e,i)=>({e,i})).reverse();
+  const resTxt=e=>e.type==='補貨'?INV_PIDS.filter(pid=>e.q[pid]).map(pid=>`${esc(prodName(pid))} ＋${e.q[pid]}`).join('、')||'—'
+    :`<span style="${invBad(e)?'color:var(--bad);font-weight:700':/^✓/.test(invRes(e))?'color:var(--ok)':''}">${esc(invRes(e))}</span>`;
+  el.innerHTML=`<details class="card sec" data-sec="inv"${isOpen('inv')?' open':''}><summary><span>庫存</span>`+
+    `<span class="sum-amt">${lastCnt?`上次盤點 ${esc(lastCnt.d)}`:'還沒有盤點'}</span>${tag}</summary>
+    ${invFail?`<div class="note warn">${esc(invFail)}，以下是上次讀到的內容。</div>`:''}
+    ${lastCnt?`<div class="tw"><table><thead><tr><th class="l">品項</th><th>現場存量</th><th>上次盤點</th><th>之後補貨</th><th>之後使用</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}
+    <div class="mixh" style="margin-top:12px">盤點／補貨紀錄</div>
+    <div class="tw"><table><thead><tr><th class="l">日期</th><th class="l">類別</th><th class="l">專師</th><th class="l">結果</th></tr></thead><tbody>`+
+    (list.map(({e,i})=>`<tr class="clk" data-act="inv-ev" data-k="${i}" style="cursor:pointer"><td class="l">${esc(e.d)}</td><td class="l">${esc(e.type)}</td><td class="l">${esc(e.np)||'<span style="color:var(--bad)">未填</span>'}</td><td class="l" style="white-space:normal">${resTxt(e)}</td></tr>`).join('')||
+     '<tr><td class="l mut" colspan="4">還沒有紀錄</td></tr>')+`</tbody></table></div></details>`;
+}
+function showInvEv(i){
+  const inv=state.data.inv, e=inv&&inv.ev[+i]; if(!e) return;
+  const pc=e.type==='盤點';
+  const tr=INV_PIDS.map(pid=>{ const q=e.q[pid]||0, df=e.df[pid], st=e.st[pid];
+    if(pc){ const exp=df==null?null:q-df;
+      return `<tr><td class="l">${esc(prodName(pid))}</td><td class="n">${fmt(q)}</td><td class="n">${exp==null?'—':fmt(exp)}</td>`+
+        `<td class="n"${df?' style="color:var(--bad);font-weight:700"':''}>${df==null?'—':df===0?'0':(df>0?'多 ':'少 ')+fmt(Math.abs(df))}</td></tr>`; }
+    if(!q) return '';
+    return `<tr><td class="l">${esc(prodName(pid))}</td><td class="n">＋${fmt(q)}</td><td class="n">${st==null?'—':fmt(st)}</td></tr>`; }).join('');
+  $('dlg').innerHTML=`<h2>${esc(e.d)} ${esc(e.type)}・${esc(e.np||'未填專師')}<button class="btn mini ghost" data-act="close">關閉</button></h2>
+    <div class="hint">${esc(e.tab)} 序 ${esc(e.seq)}${pc?`　${esc(invRes(e))}`:''}</div>
+    <div class="tw"><table><thead><tr><th class="l">品項</th>${pc?'<th>盤點</th><th>應有</th><th>差異</th>':'<th>補貨</th><th>補貨後存量</th>'}</tr></thead><tbody>${tr||'<tr><td class="l mut" colspan="3">沒有填數量</td></tr>'}</tbody></table></div>`;
+  $('mask').classList.add('on');
+}
+function invAlertHtml(){
+  const s=invSummary(); if(!s||!invBad(s.lastCnt)||invAcked().includes(invEvKey(s.lastCnt))) return '';
+  const e=s.lastCnt;
+  return `<div class="note bad"><b>⚠ ${esc(e.d)} 盤點和應有的數量不符</b>（${esc(e.np||'未填專師')}）：${esc(invRes(e).replace(/^✗\s*/,''))}　`+
+    `<button class="btn mini outline" data-act="inv-ev" data-k="${s.li}">看明細</button> <button class="btn mini" data-act="inv-ok">知道了</button></div>`;
+}
+
 // 備援：試算表改成不公開後，改上傳「檔案→下載→Microsoft Excel」的 xlsx
 function parseWorkbook(wb){
   const acc={months:{},extra:{},undated:0,mismatch:0,dropped:0,noQty:{},roster:{np:[],doc:[]}};
@@ -749,7 +851,7 @@ function parseWorkbook(wb){
       const rows=aoa.slice(hi+1).map(r=>{ r=r||[]; const cnt={};
         map.prod.forEach(p=>{ const n=qty(r[p.ci]); if(n) cnt[p.pid]=(cnt[p.pid]||0)+n; });
         return {seq:map.seq!=null?r[map.seq]:null,date:map.date!=null?parseDate(r[map.date]):null,cnt,np:r[map.np],doc:map.doc!=null?r[map.doc]:null}; });
-      addRows(acc,rows,tabM,tabY);
+      addRows(acc,rows.filter(r=>!isInvRow(r)),tabM,tabY);
       map.prod.forEach(p=>{ if(p.label) acc.extra[p.label]=1; });
       break;
     }
@@ -789,10 +891,11 @@ async function refresh(silent,full){
   try{
     const r=mergeResult(await fetchSheet(url,full||!silent),'sheet');   // 按「更新」＝整份重讀；自動的只讀有資料的分頁
     fail=null; if(r.delta) delta={txt:r.delta,at:Date.now()};
+    const ic=VIEW?false:await refreshInv(url);   // 庫存（只有主任頁）；讀失敗不影響點數
     busy=false;
     loadSched();
     if(r.changed) publishViews();
-    if(r.changed||!silent||!cur) renderAll(); else renderStatus();
+    if(r.changed||ic||!silent||!cur) renderAll(); else renderStatus();
   }catch(e){
     busy=false; fail={at:new Date().toISOString(),msg:(e&&e.message)||String(e)};
     renderStatus(); if(!silent) alert('讀取試算表失敗：'+fail.msg+'\n\n畫面上保留的是上次讀到的資料。');
@@ -822,7 +925,7 @@ function renderAll(){
   // 還沒有任何月份資料（新裝置）時先不顯示點數表與年度總覽，免得一堆 0 讓人誤會
   $('card-rates').style.display=$('card-year').style.display=cur?'':'none';
   const st={}, stat=k=>st[k]||(st[k]=monthTotals(people(calcMonth(k))).state);
-  renderAlerts(); renderStatus(); renderMonth(); renderRates(); renderYear(); renderCfg();
+  renderAlerts(); renderStatus(); renderMonth(); renderInv(); renderRates(); renderYear(); renderCfg();
   renderMonthBar(ks,stat,'<span><i class="done"></i>全部確認</span><span><i class="part"></i>確認一部分</span><span><i class="none"></i>還沒確認</span>');
 }
 // 最下面的月份列：‹ 115年10月 ›。點中間跳出月曆式選單（一年 12 格，有資料的月份才能點，圓點是確認進度）
@@ -1769,6 +1872,7 @@ function renderAlerts(){
       `${list.length>5?`<div class="bigl">…還有 ${list.length-5} 筆</div>`:''}<div class="row" style="margin-top:6px"><button class="btn mini" data-act="big-ok">知道了</button></div></div>`; }
   if(fail) h+=`<div class="note warn">讀不到試算表${state.data.checked?`，目前顯示的是 ${hm(state.data.checked)} 的資料`:''}。　<button class="btn mini outline" data-act="refresh">再試一次</button></div>`;
   if(!VIEW){
+    h+=invAlertHtml();   // 最近一次盤點和應有的數量不符
     if(sync&&/denied|error/.test(syncSt.k)) h+=`<div class="note warn">雲端同步沒有成功${syncSt.k==='denied'?'（雲端還沒開通）':''}，這台裝置上的資料不受影響。做法與狀態在最下方「其他設定」。</div>`;
     if(_notice==='pw') h+=`<div class="note warn">同步密碼已經更換，這台裝置上原本的資料已經清除。請到最下方「其他設定 → 雲端同步」輸入<b>新的</b>同步密碼，資料就會載回來。　<button class="btn mini ghost" data-act="notice-ok">知道了</button></div>`;
     // 舊規則（8 個字、可純數字）時期設的密碼沒有 strong 標記：一律要求更換
@@ -2128,6 +2232,9 @@ function act(a,t,ev){
     try{ localStorage.removeItem(LS_ME); }catch(e){} location.href=location.pathname;
   }
   else if(a==='big-ok') bigAck();
+  else if(a==='inv-ev') showInvEv(k);
+  else if(a==='inv-ok'){ const s=invSummary(); if(!s||!s.lastCnt) return;
+    const ok=invAcked().concat(invEvKey(s.lastCnt)).slice(-50); try{ localStorage.setItem(LS_INV_OK,JSON.stringify(ok)); }catch(e){} renderAlerts(); }
   else if(a==='big-perm'){ try{ const q=Notification.requestPermission(()=>renderAll()); if(q&&q.then) q.then(()=>renderAll()); }catch(e){} }
   else if(a==='big-local'){ const st=bigState(); st.off=t.checked?0:1; bigSave(st); renderAll(); }
   else if(a==='big-on'){ state.cfg.big=Object.assign({},state.cfg.big,{on:!!t.checked,t:Date.now()}); saveState(); renderAll(); }
