@@ -270,7 +270,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.21a';
+const APP_VER='2026.11.21b';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -355,7 +355,7 @@ function normState(s){
   s.cfg.views=s.cfg.views||{};   // 個人查看連結 {鍵:{tok,t}｜{del:1,t}}；鍵＝專師的姓名，醫師是 'd|姓名'
   s.cfg.rateSets=s.cfg.rateSets||{};   // 各月自己的每件點數 {'115-10':{r:{品項:{…}},t}｜{del:1,t}}，見 ratesFor()
   s.cfg.hist=s.cfg.hist||{};   // 試算表開始記錄以前的月份 {'115-01':{cost,it:{品項:件數},t}｜{del:1,t}}，只給折線圖用，見 histOf()
-  if(!Array.isArray(s.cfg.sharers)) s.cfg.sharers=null;   // null＝跟著試算表統計頁的專師名單
+  if(!Array.isArray(s.cfg.sharers)) s.cfg.sharers=null;   // null＝跟著試算表名單頁（原統計頁）的專師名單
   s.cfg.big=s.cfg.big||{on:true,min:5000,t:0};   // 單筆通知：on＝要不要發、min＝單筆品項點數的門檻（主任端設定，會同步、也會帶進個人連結）
   s.led=s.led||{};   // 醫師累積點數的確認紀錄 {id:{pk:'d|姓名',amt,at,note,t}｜{del:1,t}}，見 docCumAll()
   s.data=s.data||{}; s.data.months=s.data.months||{}; s.data.extra=s.data.extra||{};
@@ -674,9 +674,9 @@ async function sheetLayout(id){
   const enc=encodeURIComponent, tabs=[...Array(12)].map((_,i)=>`${i+1}月`);
   const head=t=>gviz(id,`sheet=${enc(t)}&tq=${enc('limit 0')}`).catch(e=>({err:e}));
   // 各分頁只抓表頭。注意：分頁不存在時 Google 不報錯、會默默回「第一個分頁」，抓資料後再用內容去重
-  const [heads,ros,arc]=await Promise.all([
+  const [heads,colA,arc]=await Promise.all([
     Promise.all(tabs.map(head)),
-    gviz(id,`sheet=${enc('統計')}&tq=${enc('select A')}`,0).catch(()=>null),
+    fetchRosterCol(id),
     gviz(id,`sheet=${enc(ARCHIVE_SHEET)}&tq=${enc('select A')}`,0).catch(()=>null),
   ]);
   const more=[]; ((arc&&arc.table&&arc.table.rows)||[]).forEach(r=>{ const v=normName(gcell(r.c&&r.c[0])), t=tabMonth(v); if(t&&t.y&&!more.includes(v)) more.push(v); });
@@ -699,11 +699,21 @@ async function sheetLayout(id){
     const tm=tabMonth(tabs[i]);
     return {tab:tabs[i],tabM:tm.m,tabY:tm.y,map,pick,labels};
   });
-  // 名單：統計頁 A 欄「專師」底下到「醫師」為止是專師，之後到空白為止是醫師
-  const rt=ros&&ros.table, colA=[];
-  if(rt){ const lab=normName(rt.cols&&rt.cols[0]&&rt.cols[0].label); if(lab) colA.push(lab);
-    (rt.rows||[]).forEach(r=>colA.push(normName(gcell(r.c&&r.c[0])))); }
   return {jobs,roster:parseRoster(colA)};
+}
+// 名單：A 欄「專師」底下到「醫師」為止是專師，之後到空白為止是醫師。
+// 2026-11-21 起在試算表隱藏的「名單」分頁（原本的「統計」分頁改名、統計數字拿掉）；讀不到或裡面沒有「專師」
+// （分頁不存在時 Google 會回第一個分頁）就退回讀「統計」
+async function fetchRosterCol(id){
+  const enc=encodeURIComponent;
+  for(const nm of ['名單','統計']){
+    const t=await gviz(id,`sheet=${enc(nm)}&tq=${enc('select A')}`,0).catch(()=>null), rt=t&&t.table, a=[];
+    if(!rt) continue;
+    const lab=normName(rt.cols&&rt.cols[0]&&rt.cols[0].label); if(lab) a.push(lab);
+    (rt.rows||[]).forEach(r=>a.push(normName(gcell(r.c&&r.c[0]))));
+    if(a.includes('專師')) return a;
+  }
+  return [];
 }
 // 欄位配置與「哪些分頁真的有資料」記 30 分鐘：期間每分鐘的自動更新只讀有資料的分頁＋這個月、下個月（新開的分頁），
 // 不用每次都讀 12 個分頁的表頭、再把不存在的分頁回的「第一個分頁」整份重抓（原本一次 25 個請求、約 400 KB）。
@@ -941,7 +951,7 @@ function parseWorkbook(wb){
   const acc={months:{},extra:{},undated:0,mismatch:0,dropped:0,noQty:{},roster:{np:[],doc:[]}};
   wb.SheetNames.forEach(name=>{
     const aoa=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:null});
-    if(/統計/.test(name)){ acc.roster=parseRoster(aoa.map(r=>normName(r&&r[0]))); return; }
+    if(/統計|名單/.test(name)){ acc.roster=parseRoster(aoa.map(r=>normName(r&&r[0]))); return; }
     const mm=name.match(/(?:(\d{2,3})\s*年\s*)?(\d{1,2})\s*月/), tabM=mm&&+mm[2]>=1&&+mm[2]<=12?+mm[2]:null, tabY=mm&&mm[1]?+mm[1]:null;
     for(let hi=0;hi<Math.min(6,aoa.length);hi++){
       const map={prod:[]};
@@ -1099,7 +1109,7 @@ function monthWarnings(c,list){
   const oddNp=Object.keys(c.np).filter(n=>n&&!known.has(n)&&sumVals(c.np[n].it));
   if(oddNp.length&&known.size) w.push(`專師「${oddNp.join('、')}」不在名單上，請確認是不是打錯字（有主要點數、但不參加平分）。`);
   const oddDoc=Object.keys(c.doc).filter(n=>n&&!knownD.has(n));
-  if(oddDoc.length&&knownD.size) w.push(`醫師「${oddDoc.join('、')}」不在試算表統計頁的名單上，請確認是不是打錯字。`);
+  if(oddDoc.length&&knownD.size) w.push(`醫師「${oddDoc.join('、')}」不在試算表「名單」頁的名單上，請確認是不是打錯字。`);
   const zr=Object.keys(c.zeroRate);
   if(zr.length) w.push(`品項「${zr.map(prodName).join('、')}」還沒設定點數（目前以 0 計），請在「每件點數」那張表填上。`);
   const np=Object.keys(c.noPrice);
@@ -1294,7 +1304,7 @@ function renderRates(){
     <h3>專師平分名單（<span class="cfg-n">${N}</span> 位）</h3>
     <div class="chips">${sh.map(n=>`<span class="chip">${esc(n)}<button title="移出名單" data-act="sharer-del" data-n="${esc(n)}">×</button></span>`).join('')||'<span class="mut">（空的）</span>'}</div>
     <div class="row"><input type="text" id="sharer-new" placeholder="新增姓名" style="width:130px"><button class="btn mini outline" data-act="sharer-add">＋加入</button>
-      ${auto?'<span class="mut" style="font-size:12.5px">目前跟著試算表「統計」頁的專師名單</span>':'<button class="btn mini ghost" data-act="sharer-reset">↺ 改回跟著試算表統計頁名單</button>'}</div>`+
+      ${auto?'<span class="mut" style="font-size:12.5px">目前跟著試算表「名單」頁的專師名單</span>':'<button class="btn mini ghost" data-act="sharer-reset">↺ 改回跟著試算表名單頁</button>'}</div>`+
     // 各廠牌的品項可以另外用自己的平分名單（例：某廠牌只給有在推的幾位平分）
     brandList().map((b,i)=>{ const L=((state.cfg.bShare&&state.cfg.bShare.m)||{})[b];
       if(!Array.isArray(L)||!L.length) return `<div class="row" style="margin-top:8px"><button class="btn mini ghost" data-act="bsh-new" data-b="${esc(b)}">＋ ${esc(b)}品項另外設平分名單</button></div>`;
