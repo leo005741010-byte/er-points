@@ -270,7 +270,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.20e';
+const APP_VER='2026.11.21a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -863,7 +863,7 @@ function invAlertHtml(){
 }
 
 // ---------- 月份鎖住（2026-11-20） ----------
-// 主任頁每個月可以「鎖住」：試算表那個月的分頁加保護，只有試算表擁有者能改（試算表的 Apps Script 網頁程式做，這裡用 JSONP 呼叫）。
+// 主任頁每個月可以「鎖住」：試算表那個月的分頁加保護，其他人不能改；擁有者改的由試算表的 Apps Script 自動改回（網頁程式做，這裡用 JSONP 呼叫）。
 // 網址與金鑰放本機設定檔（COMMISSION_LOCK_URL／_KEY，換了就把 COMMISSION_LOCK_VERSION 加 1），跟著加密雲端同步到主任的其他裝置；公開檔裡沒有
 let lockBusy=false, lockFail=null;
 const lockCfg=()=>{ const l=state.cfg.lock; return l&&l.url&&l.key?l:null; };
@@ -921,7 +921,7 @@ async function refreshLocks(){
 }
 async function setLock(k,lock){
   const tab=tabOfKey(k);
-  if(!confirm(lock?`鎖住 ${keyLabel(k)}？\n\n試算表「${tab}」分頁會被保護，除了你（試算表擁有者）沒有人能再修改。之後可以再解鎖。`
+  if(!confirm(lock?`鎖住 ${keyLabel(k)}？\n\n試算表「${tab}」分頁會被鎖住，所有人（包括你）都不能再修改，改了會自動改回。之後可以再解鎖。`
     :`解鎖 ${keyLabel(k)}？\n\n試算表「${tab}」分頁會恢復成大家都能修改。`)) return;
   lockBusy=true; renderMonth();
   try{ const d=await lockApi({a:lock?'lock':'unlock',tab}); state.data.locks={tabs:(d.locked||[]).slice().sort()}; lockFail=null; saveState(true); }
