@@ -270,7 +270,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.21b';
+const APP_VER='2026.11.23a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -311,6 +311,7 @@ const PRODUCTS=[
   {id:'scar',    name:'除疤',  re:/疤(?!.*(膠片|貼片))/},   // 試算表「疤痕凝膠」；「疤痕膠片／除疤貼片」是另一個品項，不可算進來
   {id:'glue',    name:'黏著',  re:/黏著|黏合/},
   {id:'repair',  name:'修護液',re:/修護/},
+  {id:'pingyu',  name:'平癒速',re:/平癒/},   // 試算表 11月分頁起「平癒速」（HA035）
   {id:'film',    name:'膠片',  re:/^(?!.*銀).*(膠片|貼片)/},   // 試算表「疤痕膠片」（10月分頁起）
   {id:'silver',  name:'銀泡棉(大)',re:/^(?!.*小).*銀/},   // 欄名有「銀」、沒有「小」：11月起分大小，「銀泡棉」「銀泡棉(大)」都算這一項（id 沿用原本的 silver，點數與廠牌設定留著）
   {id:'silverS', name:'銀泡棉(小)',re:/^(?=.*銀).*小/},   // 試算表 11月分頁「銀泡棉(小)」
@@ -776,25 +777,31 @@ async function fetchSheet(url,full){
 const INV_RE=/^(盤點|補貨)$/;
 const isInvRow=r=>INV_RE.test(normName(r&&r.doc));
 const INV_SHEET='庫存計算';
-const INV_PIDS=['dressing','scar','glue','repair','film','silver','silverS'];   // 「庫存計算」H～N（數量）、O～U（之後的存量）、V～AB（差異）的品項順序
-const INV_COLS='A,B,D,E,F,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z,AA,AB,AC';
+// 「庫存計算」第一列的欄名（試算表 Apps Script 的 CALC_HDR）：數量＝品項名、之後的存量＝「○○存」、差異＝「○○差」。
+// 照欄名找欄位（2026-11-23 加平癒速時欄位往後移了；舊的 30 欄格式也讀得到，沒有的品項當作沒盤）
+const INV_ITEMS=[['dressing','水性','水性'],['scar','去疤','去疤'],['glue','黏著','黏著'],['repair','修護液','修護液'],['pingyu','平癒速','平癒速'],
+  ['film','膠片','膠片'],['silver','銀泡棉(大)','銀大'],['silverS','銀泡棉(小)','銀小']];
+const INV_PIDS=INV_ITEMS.map(x=>x[0]);
 const LS_INV_OK='erCommission_invOk';   // 這台裝置按過「知道了」的盤點不符提醒
 let invFail=null;
 async function fetchInv(id){
-  const enc=encodeURIComponent;
-  const [ev,last]=await Promise.all([
-    gviz(id,`sheet=${enc(INV_SHEET)}&tq=${enc(`select ${INV_COLS} where E = '盤點' or E = '補貨'`)}`),
-    gviz(id,`sheet=${enc(INV_SHEET)}&tq=${enc('select A,O,P,Q,R,S,T,U order by AD desc limit 1')}`)]);
-  // 分頁不存在時 Google 會回第一個分頁（多半直接報錯，因為沒有 AC、AD 欄）；欄名對不上就當作還沒有庫存表
-  const lb=((ev.table&&ev.table.cols)||[]).map(c=>normLabel(c.label));
-  if(lb[0]!=='日期'||lb[3]!=='類別'||lb[4]!=='專師'||lb[26]!=='結果') throw new Error('試算表的庫存表格式不對');
+  const enc=encodeURIComponent, sh=`sheet=${enc(INV_SHEET)}`;
+  const ev=await gviz(id,`${sh}&tq=${enc(`select * where E = '盤點' or E = '補貨'`)}`);
+  const cols=(ev.table&&ev.table.cols)||[], lb=cols.map(c=>normLabel(c.label)), at=n=>lb.indexOf(n);
+  const B={d:at('日期'),tab:at('分頁'),seq:at('序'),type:at('類別'),np:at('專師'),res:at('結果'),ord:at('順序')};
+  // 分頁不存在時 Google 會回第一個分頁；欄名對不上就當作還沒有庫存表
+  if(B.d!==0||B.type!==4||Object.values(B).some(i=>i<0)||!cols[B.ord].id) throw new Error('試算表的庫存表格式不對');
+  const qi=INV_ITEMS.map(x=>at(x[1])), si=INV_ITEMS.map(x=>at(x[2]+'存')), di=INV_ITEMS.map(x=>at(x[2]+'差'));
   const num=v=>v==null||v===''||isNaN(Number(v))?null:Number(v);
   const md=v=>{ const d=parseDate(v); return d&&d.m?`${d.m}/${d.d}`:''; };
-  const evs=(ev.table.rows||[]).map(r=>{ const c=r.c||[], g=i=>gcell(c[i]), q={}, st={}, df={};
-    INV_PIDS.forEach((pid,j)=>{ q[pid]=num(g(5+j)); st[pid]=num(g(12+j)); df[pid]=num(g(19+j)); });   // q 空著＝這次沒盤／沒補這一項
-    return {d:md(g(0)),tab:normName(g(1)),seq:g(2)==null?'':String(g(2)),type:normName(g(3)),np:normName(g(4)),q,st,df,res:String(g(26)||'').trim()}; });
+  const evs=(ev.table.rows||[]).map(r=>{ const c=r.c||[], g=i=>i<0?null:gcell(c[i]), q={}, st={}, df={};
+    INV_PIDS.forEach((pid,j)=>{ q[pid]=num(g(qi[j])); st[pid]=num(g(si[j])); df[pid]=num(g(di[j])); });   // q 空著＝這次沒盤／沒補這一項
+    return {d:md(g(B.d)),tab:normName(g(B.tab)),seq:g(B.seq)==null?'':String(g(B.seq)),type:normName(g(B.type)),np:normName(g(B.np)),q,st,df,res:String(g(B.res)||'').trim()}; });
+  // 最後一列（順序最大）＝現場存量
+  const sel=[B.d].concat(si.filter(i=>i>=0));
+  const last=await gviz(id,`${sh}&tq=${enc(`select ${sel.map(i=>cols[i].id).join(',')} order by ${cols[B.ord].id} desc limit 1`)}`);
   const lr=last.table&&last.table.rows&&last.table.rows[0], now={};
-  if(lr) INV_PIDS.forEach((pid,j)=>{ now[pid]=num(gcell((lr.c||[])[1+j])); });
+  if(lr) INV_PIDS.forEach((pid,j)=>{ now[pid]=si[j]<0?null:num(gcell((lr.c||[])[sel.indexOf(si[j])])); });
   return {ev:evs,now:lr?now:null,nowD:lr?md(gcell((lr.c||[])[0])):''};
 }
 async function refreshInv(url){
@@ -1382,7 +1389,7 @@ function refreshCfgRow(pid){
 }
 
 // ---------- 組成橫條 ----------
-const PROD_COLOR={dressing:'#1a4a7a',scar:'#5b9bd5',glue:'#ed7d31',repair:'#2e9e6b',film:'#c0504d',silver:'#6c7a89',silverS:'#a3b1bf'}, XCOLOR=['#8e6bb5','#c9a34a','#4fb3bf','#d16a8a'];
+const PROD_COLOR={dressing:'#1a4a7a',scar:'#5b9bd5',glue:'#ed7d31',repair:'#2e9e6b',pingyu:'#9b59b6',film:'#c0504d',silver:'#6c7a89',silverS:'#a3b1bf'}, XCOLOR=['#8e6bb5','#c9a34a','#4fb3bf','#d16a8a'];
 function prodColor(pid){ if(PROD_COLOR[pid]) return PROD_COLOR[pid]; const i=productList().map(p=>p.id).filter(x=>!PROD_COLOR[x]).indexOf(pid); return XCOLOR[(i<0?0:i)%XCOLOR.length]; }
 // 一條橫的長方形，各部分照占比分色；下面逐項列出點數與百分比。parts=[{label,note,v,c}]，由大到小排；0 的不畫、列在最後
 function mixHtml(parts){
