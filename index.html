@@ -270,7 +270,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.25b';
+const APP_VER='2026.11.25c';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -432,9 +432,16 @@ function poolGroups(){
 }
 function cfgFor(key){ const o={products:ratesFor(key),sharers:liveSharers(),cap:liveCap()}, g=poolGroups(); if(g){ o.pg=g.pg; o.groups=g.groups; } return o; }
 // 每一筆主要點數的上限（2026-11-25 主任指定）：cfg.cap={pids:[品項],max:件數,from:'115-11-25'}。從 from 那天起的每一筆（試算表一列），
-// 這幾個品項合計超過 max 件的部分，主要點數不給主要的人，改放進該品項的平分池（銀泡棉＝那 4 位平分）。
-// 設定來自本機設定檔（COMMISSION_PROMO_CAP，見 applyPatches），跟著加密雲端同步；個人頁由主任端放進去
-const liveCap=()=>{ const p=state.cfg.cap; return p&&!p.del&&Array.isArray(p.pids)&&p.max>0?{pids:p.pids.slice(),max:Number(p.max),from:p.from||''}:null; };
+// 這幾個品項合計超過 max 件的部分，主要點數不給主要的人，改放進平分池。cap.grp＝指定給哪一組平分（'莫尼克'＝那 4 位），
+// cap.to＝那一組的名單（主任端從廠牌平分名單帶進來，月份快照一起固定）——不管品項有沒有選廠牌、快照裡有沒有分組，都只給這一組。
+// 設定來自本機設定檔（COMMISSION_PROMO_CAP，見 applyPatches），跟著加密雲端同步；個人頁由主任端放進去（只給人數，不給名單）
+const liveCap=()=>{ const p=state.cfg.cap; if(!(p&&!p.del&&Array.isArray(p.pids)&&p.max>0)) return null;
+  const o={pids:p.pids.slice(),max:Number(p.max),from:p.from||''};
+  if(p.grp){ o.grp=p.grp; const S=!VIEW&&state.cfg.bShare&&state.cfg.bShare.m&&state.cfg.bShare.m[p.grp]; if(Array.isArray(S)&&S.length) o.to=S.slice(); }
+  return o; };
+const capSame=(a,b)=>!!a&&!!b&&a.max===b.max&&(a.from||'')===(b.from||'')&&JSON.stringify(a.pids)===JSON.stringify(b.pids);
+// 月份快照裡的上限：還沒有上限（undefined），或是同一個上限但還沒指定平分給哪一組（11/25 早上的版本）→ 用現在的
+const capStale=(sc,lc)=>sc===undefined||(!!sc&&!sc.grp&&!!lc&&!!lc.grp&&capSame(sc,lc));
 // 這一列各品項超過上限的件數（{品項:件數}），沒有超過回 null。key＝這一列算在哪個月（民國 年-月）
 function capOver(r,cfg,key){
   const cp=cfg&&cfg.cap; if(!cp||!Array.isArray(cp.pids)||!(cp.max>0)) return null;
@@ -451,11 +458,13 @@ function pidVal(r,c,live,pid,f){
   const o=((capOver(r,c.cfg,c.key)||{})[pid])||0;
   return f==='promo'?(q-o)*rt.promo:q*rt.pool+o*rt.promo;
 }
-const poolGroupOf=(cfg,pid)=>(cfg&&cfg.pg&&cfg.pg[pid])||'';   // ''＝預設那一組
-const groupMembers=(cfg,g)=>g?(((cfg.groups||{})[g])||[]):cfg.sharers;
+// 有上限的品項（銀泡棉）：平分一律進上限指定的那一組（cap.grp）；其他品項照廠牌分組，''＝預設那一組
+const capGrpOf=(cfg,pid)=>{ const cp=cfg&&cfg.cap; return cp&&cp.grp&&Array.isArray(cp.pids)&&cp.pids.includes(pid)&&groupMembers(cfg,cp.grp).length?cp.grp:''; };
+const poolGroupOf=(cfg,pid)=>capGrpOf(cfg,pid)||(cfg&&cfg.pg&&cfg.pg[pid])||'';
+const groupMembers=(cfg,g)=>g?(((cfg.groups||{})[g])||(cfg.cap&&cfg.cap.grp===g&&Array.isArray(cfg.cap.to)?cfg.cap.to:[])):cfg.sharers;
 const inAnyPool=(cfg,name)=>cfg.sharers.includes(name)||Object.values(cfg.groups||{}).some(S=>S.includes(name));
 // 有確認紀錄的月份用當時固定下來的設定（pm.cfg）；其餘照 cfgFor
-function monthCfg(key){ const pm=state.pay[key]; if(pm&&pm.cfg) return pm.cfg.cap===undefined?Object.assign({},pm.cfg,{cap:liveCap()}):pm.cfg; return cfgFor(key); }   // 上限出現以前留的快照沒有 cap：跟著現在的上限（只從開始那天起算）
+function monthCfg(key){ const pm=state.pay[key]; if(pm&&pm.cfg){ const lc=liveCap(); return capStale(pm.cfg.cap,lc)?Object.assign({},pm.cfg,{cap:lc}):pm.cfg; } return cfgFor(key); }   // 上限出現以前留的快照沒有 cap：跟著現在的上限（只從開始那天起算）
 // 表格上要顯示的：這個月實際在用的每件點數
 function monthRates(key){ const cfg=monthCfg(key), live=ratesFor(key), o={}; productList().forEach(p=>{ o[p.id]=rateOf(cfg,p.id,live); }); return o; }
 function paidOf(key){   // 只回有效的確認紀錄（取消的 {del:1} 不算）
@@ -947,7 +956,7 @@ function applyPatches(){
   // COMMISSION_PROMO_CAP：每一筆主要上限 {pids,max,from}（max 是 0 或沒有＝不設上限）
   const cv=window.COMMISSION_PROMO_CAP_VERSION, cpp=window.COMMISSION_PROMO_CAP;
   if(cv&&c.capV!==cv){
-    c.cap=cpp&&Array.isArray(cpp.pids)&&cpp.max>0?{pids:cpp.pids.slice(),max:Number(cpp.max),from:String(cpp.from||''),t:now}:{del:1,t:now};
+    c.cap=cpp&&Array.isArray(cpp.pids)&&cpp.max>0?{pids:cpp.pids.slice(),max:Number(cpp.max),from:String(cpp.from||''),grp:String(cpp.grp||''),t:now}:{del:1,t:now};
     c.capV=cv; ch=true;
   }
   return ch;
@@ -1390,11 +1399,17 @@ function setBrand(pid,v){
 // 每一筆主要點數上限：放在每件點數卡裡（數字改在本機設定檔 COMMISSION_PROMO_CAP）
 const capDate=f=>{ const m=String(f||'').match(/^(\d+)-(\d+)-(\d+)$/); return m?`${+m[1]}/${+m[2]}/${+m[3]}`:''; };
 const capItems=cp=>cp.pids.map(prodName).join('＋');
+// 超過上限的放進哪一組平分：「莫尼克 4 位平分」（names＝主任頁連名單一起寫）
+function capToTxt(cfg,names){
+  const cp=cfg&&cfg.cap, g=cp&&cp.grp, S=g?groupMembers(cfg,g):[];
+  if(!g||!S.length) return '平分';
+  return `${esc(g)} ${S.length} 位平分${names?`（${S.map(esc).join('、')}）`:''}`;
+}
 function capHtml(){
   const cp=liveCap(); if(!cp) return '';
-  const c=cur&&state.data.months[cur]?calcMonth(cur):null, n=c?sumVals(c.capQ):0;
-  return `<h3>每一筆主要上限</h3><div class="row" style="margin-top:0"><b>${esc(capItems(cp))}</b> 合計最多 <b>${fmt(cp.max)}</b> 件${cp.from?`（${capDate(cp.from)} 起）`:''}`+
-    `${n?`<span class="tag no">${keyLabel(cur)}超過 ${fmt(n)} 件，放進平分</span>`:''}</div>`;
+  const c=cur&&state.data.months[cur]?calcMonth(cur):null, n=c?sumVals(c.capQ):0, cf=c?c.cfg:cfgFor(cur||'');
+  return `<h3>每一筆主要上限</h3><div class="row" style="margin-top:0"><b>${esc(capItems(cp))}</b> 合計最多 <b>${fmt(cp.max)}</b> 件${cp.from?`（${capDate(cp.from)} 起）`:''}，超過的放進${capToTxt(cf,true)}`+
+    `${n?`<span class="tag no">${keyLabel(cur)}超過 ${fmt(n)} 件</span>`:''}</div>`;
 }
 function renderRatesNote(){
   const el=$('rates-note'); if(!el) return;
@@ -1703,7 +1718,7 @@ function showDetail(pk){
   const role=pk[0], name=pk.slice(2), c=calcMonth(cur), f=role==='d'?'doc':'np';
   const rows=c.rows.filter(r=>r[f]===name), p=people(c).find(x=>x.pk===pk)||{amt:0,promo:0,share:0};
   const live=ratesFor(cur), each=r=>rowVal(r,c,live,role==='d'?'doc':'promo');
-  const ovTxt=r=>{ if(role==='d') return ''; const o=capOver(r,c.cfg,cur), n=o?sumVals(o):0; return n?`<br><small class="mut">${n} 件超過上限，放進平分</small>`:''; };
+  const ovTxt=r=>{ if(role==='d') return ''; const o=capOver(r,c.cfg,cur), n=o?sumVals(o):0; return n?`<br><small class="mut">${n} 件超過上限，放進${capToTxt(c.cfg)}</small>`:''; };
   $('dlg').innerHTML=`<h2>${esc(name||'（未填姓名）')}・${keyLabel(cur)}${role==='d'?'醫師點數':'專師主要'}明細<button class="btn mini ghost" data-act="close">關閉</button></h2>
     <div class="hint">${rows.length} 筆，${role==='d'?`點數合計 ${fmt(p.amt)}`:`主要點數 ${fmt(p.promo)}＋平分 ${fmt(p.share)}＝${fmt(p.amt)}`}`+
       `${brandList().length&&p.bb&&p.amt?`（${bbText(p.bb)}）`:''}。</div>
@@ -1720,7 +1735,7 @@ function ensureMonth(key){
   if(!pm.cfg){ pm.cfg=clone(cfgFor(key)); pm.cfgT=Date.now(); }
   else{   // 加科部之前留下的快照：把現行的科部點數寫進去固定下來
     const live=ratesFor(key); let ch=false;
-    if(pm.cfg.cap===undefined){ pm.cfg.cap=liveCap(); ch=true; }   // 每一筆上限出現以前的快照
+    { const lc=liveCap(); if(capStale(pm.cfg.cap,lc)){ pm.cfg.cap=lc; ch=true; } }   // 每一筆上限出現以前的快照／還沒指定平分給哪一組
     Object.keys(pm.cfg.products||{}).forEach(pid=>{ const r=pm.cfg.products[pid]; if(!r) return;
       ['fund','price','cost'].forEach(f=>{ if(r[f]==null){ r[f]=(live[pid]||ZERO)[f]; ch=true; } }); });
     if(ch) pm.cfgT=Date.now();
@@ -2314,20 +2329,24 @@ function viewBlob(key){
   }
   const live=cfgFor(''), months={}, sets={};
   // 平分分組：組名＝廠牌（專師頁要分廠牌顯示），名單只給人數與本人在不在
-  const vgOf=cfg=>{ if(!cfg||!cfg.pg) return null; const groups={};
-    [...new Set(Object.values(cfg.pg))].forEach(g=>{ const S=(cfg.groups||{})[g]||[]; groups[g]={n:S.length,in:S.includes(name)}; });
-    return {pg:Object.assign({},cfg.pg),groups}; };
+  // 上限指定的那一組（cap.grp）也要放；上限本身不帶名單（cap.to）
+  const vgOf=cfg=>{ if(!cfg) return null; const gs=new Set(Object.values(cfg.pg||{})), cg=cfg.cap&&cfg.cap.grp;
+    if(cg&&groupMembers(cfg,cg).length) gs.add(cg);
+    if(!gs.size) return null; const groups={};
+    gs.forEach(g=>{ const S=groupMembers(cfg,g); groups[g]={n:S.length,in:S.includes(name)}; });
+    return {pg:Object.assign({},cfg.pg||{}),groups}; };
+  const capV=cp=>{ if(!cp) return null; const o=Object.assign({},cp); delete o.to; return o; };
   Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=npRates(ratesFor(k)); });
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm) return;
     const m={}, rec=pm.paid&&pm.paid['n|'+name];
-    if(pm.cfg){ m.rates=npRates(pm.cfg.products); m.n=pm.cfg.sharers.length; m.inPool=pm.cfg.sharers.includes(name); const vg=vgOf(pm.cfg); if(vg) m.vg=vg; }
+    if(pm.cfg){ const mc=monthCfg(k); m.rates=npRates(pm.cfg.products); m.n=pm.cfg.sharers.length; m.inPool=pm.cfg.sharers.includes(name); const vg=vgOf(mc); if(vg) m.vg=vg;
+      m.cap=capV(mc.cap); }   // 那個月適用的每一筆上限
     if(rec&&!rec.del){ m.paid={amt:rec.amt,at:rec.at}; if(rec.b) m.paid.b=rec.b; }   // b＝各廠牌已確認的點數
-    if(pm.cfg) m.cap=monthCfg(k).cap||null;   // 那個月適用的每一筆上限
     if(Object.keys(m).length) months[k]=m; });
   const b={v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),sets,n:live.sharers.length,inPool:live.sharers.includes(name),months,big:bigBlob()};
   const vg=vgOf(live); if(vg) b.vg=vg;
   if(Object.keys(brand).length) b.brand=brand;
-  if(liveCap()) b.cap=liveCap();
+  if(liveCap()) b.cap=capV(liveCap());
   return b;
 }
 async function publishViews(){
@@ -2515,7 +2534,7 @@ function renderMe(ks){
         const gN=groupMembers(c.cfg,poolGroupOf(c.cfg,x.pid)).length;
         return `<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.promo)}</td><td class="n">${fmt(x.r.pool)}</td><td class="n">${gN?fmt2(x.r.pool/gN)+`<small class="mut">（÷${gN}）</small>`:'—'}</td></tr>`; }).join('')||
        '<tr><td class="l mut" colspan="4">還沒有設定</td></tr>')+`</tbody></table></div>
-      <div class="sub2">${(()=>{ const cp=c.cfg.cap; return cp&&cp.pids?`<b>${esc(capItems(cp))}</b>：每一筆合計最多 ${fmt(cp.max)} 件算主要${cp.from?`（${capDate(cp.from)} 起）`:''}，超過的件數放進平分${p.capQ?`（這個月你有 ${fmt(p.capQ)} 件超過）`:''}。<br>`:''; })()}<b>主要</b>：這一件由你主要負責時，你得到的點數。<b>平分</b>：每一件另外提供、由平分名單上的 ${grpTxt} 均分的點數，不管是誰主要，名單上每個人都有${p.share||!c.pool?'':'（你目前不在平分名單內）'}。<br>
+      <div class="sub2">${(()=>{ const cp=c.cfg.cap; return cp&&cp.pids?`<b>${esc(capItems(cp))}</b>：每一筆合計最多 ${fmt(cp.max)} 件算主要${cp.from?`（${capDate(cp.from)} 起）`:''}，超過的件數放進${capToTxt(c.cfg)}${p.capQ?`（這個月你有 ${fmt(p.capQ)} 件超過）`:''}。<br>`:''; })()}<b>主要</b>：這一件由你主要負責時，你得到的點數。<b>平分</b>：每一件另外提供、由平分名單上的 ${grpTxt} 均分的點數，不管是誰主要，名單上每個人都有${p.share||!c.pool?'':'（你目前不在平分名單內）'}。<br>
       這個月：${bl.length?bl.map(b=>`${esc(bName(b))} ${fmt(bb[b]||0)} 點（主要 ${fmt(bPromo(b))}＋平分 ${fmt(bSh(b))}${bN(b)?`，平分池 ÷ ${bN(b)} 位`:''}）`).join('＋')
         :`主要 ${fmt(p.promo)} 點（自己主要的件數 × 上表的主要點數）＋平分 ${fmt(p.share)} 點（${c.cfg.pg?'各平分池 ÷ 各自的人數':`全體平分池 ${fmt(c.pool)} 點 ÷ ${N} 位`}）`}＝ ${fmt(p.amt)} 點。</div></details>`);
   const each=r=>rowVal(r,c,ratesFor(cur),f);   // 專師：算進每一筆上限
