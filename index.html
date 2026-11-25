@@ -270,7 +270,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.23a';
+const APP_VER='2026.11.25a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -470,7 +470,8 @@ function calcMonth(key,cfgOverride){
     c.cost+=q*rt.cost;
     c.bv[bk]=(c.bv[bk]||0)+q*(rt.doc+rt.promo+rt.pool+rt.fund);
     c.bs[bk]=(c.bs[bk]||0)+q*rt.price;   // 各廠牌的品項總點數
-    const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0,sales:0}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc; d.sales+=q*rt.price;
+    const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0,sales:0,amtB:{}}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc; d.sales+=q*rt.price;
+    d.amtB[bk]=(d.amtB[bk]||0)+q*rt.doc;   // 醫師各廠牌的點數
     const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0,promoB:{}}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=q*rt.promo;
     n.promoB[bk]=(n.promoB[bk]||0)+q*rt.promo;   // 各廠牌的主要點數
     const g=poolGroupOf(cfg,pid); c.poolG[g]=(c.poolG[g]||0)+q*rt.pool; if(!g) c.poolBm[bk]=(c.poolBm[bk]||0)+q*rt.pool;
@@ -498,6 +499,16 @@ function npByBrand(c,name,amt){
   if(diff){ const top=Object.keys(o).sort((x,y)=>o[y]-o[x])[0]; if(top!=null) o[top]+=diff; else o['']=diff; }
   return o;
 }
+// 醫師的點數分廠牌：各廠牌取整數，和合計差的零頭放進最大的那一個廠牌（兩邊加起來＝合計）
+function roundBrands(o,amt){
+  const r={}; Object.keys(o||{}).forEach(b=>{ const v=Math.round(o[b]); if(v) r[b]=v; });
+  const diff=amt-sumVals(r);
+  if(diff){ const top=Object.keys(r).sort((x,y)=>r[y]-r[x])[0]; if(top!=null) r[top]+=diff; else r['']=diff; }
+  return r;
+}
+// 廠牌排序：照每件點數表的順序，未選廠牌（''）排最後
+const brandSort=(x,y)=>[x,y].map(b=>{ const i=brandList().indexOf(b); return b===''?999:i<0?99:i; }).reduce((a,c)=>a-c);
+const bbText=bb=>Object.keys(bb||{}).filter(b=>bb[b]).sort(brandSort).map(b=>`${esc(b||'未選廠牌')} ${fmt(bb[b])}`).join('、');
 // 這個月有紀錄的品項（依設定表的順序；設定表還沒有的新品項排最後）
 function monthPids(c){
   const known=productList().map(p=>p.id);
@@ -506,8 +517,8 @@ function monthPids(c){
 // 每人一列：role d=醫師 n=專師 f=科部（整個月一列，和個人一樣註記「已確認」）；沒填姓名的列不能確認（payable=false）
 function people(c){
   const paid=paidOf(c.key), out=[], seen={};
-  Object.keys(c.doc).forEach(n=>{ const d=c.doc[n];
-    out.push({role:'d',name:n,pk:'d|'+n,it:d.it,promo:0,share:0,amt:Math.round(d.amt),sales:Math.round(d.sales||0),payable:!!n}); });
+  Object.keys(c.doc).forEach(n=>{ const d=c.doc[n], amt=Math.round(d.amt);
+    out.push({role:'d',name:n,pk:'d|'+n,it:d.it,promo:0,share:0,amt,bb:roundBrands(d.amtB,amt),sales:Math.round(d.sales||0),payable:!!n}); });
   Object.keys(c.np).forEach(n=>{ const p=c.np[n];
     const amt=Math.round(p.promo)+p.share;
     out.push({role:'n',name:n,pk:'n|'+n,it:p.it,promo:Math.round(p.promo),share:p.share,amt,bb:npByBrand(c,n,amt),payable:!!n}); });
@@ -1085,6 +1096,7 @@ function switchMonth(k){
 }
 const payWord=p=>({ok:'已確認',no:'未確認',day:'確認日期'});
 function payCell(p){
+  if(p.role==='n') return npPayCell(p);   // 專師：分廠牌、可以自己輸入這次確認多少點
   const k=esc(p.pk), W=payWord(p);
   if(!p.payable) return '<span class="tag no">沒填姓名，無法確認</span>';
   if(p.rec){
@@ -1204,15 +1216,20 @@ function renderMonth(){
   // 班表上這個月有上班、但沒有任何紀錄的醫師也列出來（每小時是 0），合計的每小時才是整個單位的
   if(schedHrs&&schedHrs.m[cur]) schedHrs.names.forEach(n=>{ const hh=docHours(n,cur); if(hh&&!dList.some(x=>x.p.name===n)) dList.push({p:{role:'d',name:n,pk:'d|'+n,it:{},amt:0,sales:0,payable:true,idle:1},h:hh}); });
   const hSum=dList.reduce((t,x)=>t+(x.h||0),0), phTxt=(sl,hh)=>{ const v=perHour(sl,hh); return v==null?'—':fmt(v); };
-  const drow=({p,h:hh})=>`<tr class="${!p.payable?'bad':''}"><td class="l nmc">${p.idle?`<b>${esc(p.name)}</b>`:nameBtn(p)}</td>${pids.map(pid=>qtd(p.it[pid],pid)).join('')}<td class="amt">${fmt(p.amt)}</td>`+
+  // 醫師點數也分各廠牌（有選廠牌時）：該廠牌品項的件數 × 醫師點數
+  const bName=b=>`${b||'未選廠牌'}點數`;
+  const dbs=brandList().length?[...brandList(),''].filter(b=>docs.some(p=>(p.bb||{})[b])):[];
+  const dbTot={}; docs.forEach(p=>dbs.forEach(b=>dbTot[b]=(dbTot[b]||0)+((p.bb||{})[b]||0)));
+  const dbTd=v=>dbs.map(b=>`<td class="n sub" data-l="${esc(bName(b))}">${fmt((v||{})[b]||0)}</td>`).join('');
+  const drow=({p,h:hh})=>`<tr class="${!p.payable?'bad':''}"><td class="l nmc">${p.idle?`<b>${esc(p.name)}</b>`:nameBtn(p)}</td>${pids.map(pid=>qtd(p.it[pid],pid)).join('')}${dbTd(p.bb)}<td class="amt">${fmt(p.amt)}</td>`+
     `<td class="n sub" data-l="品項總點數">${fmt(p.sales)}</td><td class="n sub" data-l="上班">${hh==null?'—':hh+'<span class="hru"> 小時</span>'}</td><td class="n sub" data-l="每小時">${phTxt(p.sales,hh)}</td></tr>`;
   const docMix=mixHtml(docs.filter(p=>p.amt>0).map(p=>({label:p.name||'（未填醫師）',note:sumVals(p.it)+' 件',v:p.amt,c:personColor('d',p.name)})));
   const npMix=mixHtml(nps.filter(p=>p.amt>0).map(p=>({label:p.name||'（未填專師）',note:'主要 '+sumVals(p.it)+' 件',v:p.amt,c:personColor('n',p.name)})));
   h+=sec('d','醫師點數',dTot,'',`${schedHrs&&schedHrs.m[cur]?'':'<div class="note warn">目前還沒讀到班表，上班時數與每小時是空的。</div>'}
     ${docMix?`<div class="mixh">各醫師的占比</div>${docMix}<div class="mixh" style="margin-top:12px">明細</div>`:''}
-    <div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}<th>點數</th><th>品項總點數</th><th>上班時數</th><th>每小時品項總點數</th></tr></thead><tbody>`+
-    (dList.length?dList.map(drow).join(''):`<tr><td class="l mut" colspan="${pids.length+5}">本月沒有紀錄</td></tr>`)+
-    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}<td class="amt">${fmt(dTot)}</td><td class="n sub" data-l="品項總點數">${fmt(c.sales)}</td><td class="n sub" data-l="上班">${hSum?hSum+'<span class="hru"> 小時</span>':'—'}</td><td class="n sub" data-l="每小時">${phTxt(c.sales,hSum)}</td></tr></tbody></table></div>`);
+    <div class="tw"><table class="ppl"><thead><tr><th class="l">醫師</th>${pids.map(pid=>`<th>${esc(prodName(pid))}</th>`).join('')}${dbs.map(b=>`<th>${esc(bName(b))}</th>`).join('')}<th>點數</th><th>品項總點數</th><th>上班時數</th><th>每小時品項總點數</th></tr></thead><tbody>`+
+    (dList.length?dList.map(drow).join(''):`<tr><td class="l mut" colspan="${pids.length+5+dbs.length}">本月沒有紀錄</td></tr>`)+
+    `<tr class="tot"><td class="l nmc">合計</td>${pids.map(pid=>qtd(c.prod[pid],pid)).join('')}${dbTd(dbTot)}<td class="amt">${fmt(dTot)}</td><td class="n sub" data-l="品項總點數">${fmt(c.sales)}</td><td class="n sub" data-l="上班">${hSum?hSum+'<span class="hru"> 小時</span>':'—'}</td><td class="n sub" data-l="每小時">${phTxt(c.sales,hSum)}</td></tr></tbody></table></div>`);
   // 醫師累積點數（不分月份）：以 1,000 點為一單位，有確認時按「記一筆」
   const cums=Object.values(docCumAll()).filter(x=>x.total||x.recs.length).sort((a,b)=>b.left-a.left||a.name.localeCompare(b.name,'zh-Hant'));
   const cT=f=>cums.reduce((t,x)=>t+x[f],0);
@@ -1224,7 +1241,6 @@ function renderMonth(){
     `</tbody></table></div></details>`;
   // 專師（有選廠牌時，點數另外分成各廠牌的點數：該廠牌品項的主要＋該廠牌平分池÷平分人數）
   const nbs=brandList().length?[...brandList(),''].filter(b=>nps.some(p=>(p.bb||{})[b])):[];
-  const bName=b=>`${b||'未選廠牌'}點數`;
   const bTd=(p,v)=>nbs.map(b=>`<td class="n sub" data-l="${esc(bName(b))}">${fmt((v||{})[b]||0)}</td>`).join('');
   const bTot={}; nps.forEach(p=>nbs.forEach(b=>bTot[b]=(bTot[b]||0)+((p.bb||{})[b]||0)));
   h+=sec('n','專師點數',nTot,prog(nps,'已確認'),`${allBtn('n','專師')?`<div class="sec-head">${allBtn('n','專師')}</div>`:''}
@@ -1444,6 +1460,9 @@ function ensureBrandTrend(){
 function ensureMyBrandTrend(){
   brandList().forEach(b=>{ if(TREND['myb:'+b]) return;
     TREND['myb:'+b]={title:b+'點數',unit:'點',get:k=>(meOf(k).bb||{})[b]||0};
+    // 醫師頁：上月同期＝到那天為止自己那幾筆、該廠牌品項 × 醫師點數
+    if(isDocView()){ MTD['myb:'+b]=(k,d)=>{ const name=viewInfo?viewInfo.name:'';
+      return mtdSum(k,d,(r,c,live)=>r.doc===name?Object.keys(r.it).reduce((x,pid)=>x+(brandOf(pid)===b?r.it[pid]*rateOf(c.cfg,pid,live).doc:0),0):0); }; return; }
     // 上月同期：到那天為止自己主要的該廠牌點數＋該廠牌品項的平分池÷那一組人數（本人在那一組才算）
     MTD['myb:'+b]=(k,d)=>{ const name=viewInfo?viewInfo.name:'', cf=monthCfg(k);
       const f=fd=>(r,c,live)=>Object.keys(r.it).reduce((x,pid)=>x+(brandOf(pid)===b?r.it[pid]*rateOf(c.cfg,pid,live)[fd]:0),0);
@@ -1588,8 +1607,8 @@ function cumHtml(m){
 }
 function showTrend(m){
   // 個人頁只看自己的：醫師頁＝my 開頭的四張；專師頁＝我的點數／我的主要件數，加上全體的品項總點數／總件數
-  if(!VIEW) ensureBrandTrend(); else if(!isDocView()) ensureMyBrandTrend();
-  const T=TREND[m]; if(!T||(VIEW&&!(isDocView()?/^my(?!b:)/:/^(myamt|myunits|sales|units|myb:.+)$/).test(m))) return;
+  if(!VIEW) ensureBrandTrend(); else ensureMyBrandTrend();
+  const T=TREND[m]; if(!T||(VIEW&&!(isDocView()?/^my/:/^(myamt|myunits|sales|units|myb:.+)$/).test(m))) return;
   const pts=trendPts(m), anyH=pts.some(p=>p.h);
   const itTxt=k=>{ const it=histOf(k).it||{}; return Object.keys(it).filter(pid=>it[pid]&&(!T.brand||brandOf(pid)===T.brand)).map(pid=>`${esc(prodName(pid))} ${it[pid]}`).join('・'); };   // 廠牌的圖只列該廠牌的品項
   const cumH=cumHtml(m);
@@ -1646,8 +1665,8 @@ function showDetail(pk){
   const rows=c.rows.filter(r=>r[f]===name), p=people(c).find(x=>x.pk===pk)||{amt:0,promo:0,share:0};
   const each=r=>Object.keys(r.it).reduce((s,pid)=>s+r.it[pid]*((c.cfg.products[pid]||ZERO)[role==='d'?'doc':'promo']),0);
   $('dlg').innerHTML=`<h2>${esc(name||'（未填姓名）')}・${keyLabel(cur)}${role==='d'?'醫師點數':'專師主要'}明細<button class="btn mini ghost" data-act="close">關閉</button></h2>
-    <div class="hint">${rows.length} 筆，${role==='d'?`點數合計 ${fmt(p.amt)}`:`主要點數 ${fmt(p.promo)}＋平分 ${fmt(p.share)}＝${fmt(p.amt)}`+
-      (brandList().length&&p.bb&&p.amt?`（${Object.keys(p.bb).filter(b=>p.bb[b]).sort((x,y)=>[x,y].map(b=>{ const i=brandList().indexOf(b); return i<0?99:i; }).reduce((a,c)=>a-c)).map(b=>`${esc(b||'未選廠牌')} ${fmt(p.bb[b])}`).join('、')}）`:'')}。</div>
+    <div class="hint">${rows.length} 筆，${role==='d'?`點數合計 ${fmt(p.amt)}`:`主要點數 ${fmt(p.promo)}＋平分 ${fmt(p.share)}＝${fmt(p.amt)}`}`+
+      `${brandList().length&&p.bb&&p.amt?`（${bbText(p.bb)}）`:''}。</div>
     <div class="tw"><table><thead><tr><th>序</th><th class="l">日期</th><th class="l">品項 × 數量</th><th class="l">${role==='d'?'主要專師':'醫師'}</th><th>${role==='d'?'點數':'主要點數'}</th></tr></thead><tbody>`+
     (rows.map(r=>`<tr><td class="n">${esc(r.n)}</td><td class="l">${esc(r.d)}</td><td class="l">${Object.keys(r.it).map(pid=>`${esc(prodName(pid))} × ${r.it[pid]}`).join('、')}</td><td class="l">${esc(role==='d'?r.np:r.doc)||'<span style="color:var(--bad)">未填</span>'}</td><td class="n">${fmt(each(r))}</td></tr>`).join('')||
      '<tr><td class="l mut" colspan="5">沒有本人為主要的紀錄（只有平分）</td></tr>')+'</tbody></table></div>';
@@ -1668,8 +1687,79 @@ function ensureMonth(key){
   return pm;
 }
 function findPerson(pk){ return people(calcMonth(cur)).find(p=>p.pk===pk); }
+// ---------- 專師的確認：分廠牌、自己輸入這次確認多少點（可以只確認一部分） ----------
+// 紀錄＝{amt:已確認合計, b:{廠牌:已確認}, h:[{at,b:{廠牌:這次}}], at:最近一次確認日, t}。
+// 改版前的紀錄沒有 b：照各廠牌的點數依序算進去（npGot），歷史當作一筆
+const cleanB=o=>{ const r={}; Object.keys(o||{}).forEach(b=>{ const v=Math.round(Number(o[b])||0); if(v) r[b]=v; }); return r; };
+const subB=(a,b)=>{ const r={}; [...new Set([...Object.keys(a||{}),...Object.keys(b||{})])].forEach(x=>{ const v=((a||{})[x]||0)-((b||{})[x]||0); if(v) r[x]=v; }); return r; };
+function npGot(p){
+  const r=p.rec; if(!r) return {};
+  if(r.b) return cleanB(r.b);
+  const bb=p.bb||{}, ks=Object.keys(bb).sort(brandSort), o={}; let left=Number(r.amt)||0;
+  ks.forEach(b=>{ const v=Math.max(0,Math.min(left,bb[b]||0)); if(v){ o[b]=v; left-=v; } });
+  if(left) o[ks[0]||'']=(o[ks[0]||'']||0)+left;
+  return o;
+}
+const npHist=p=>p.rec?(p.rec.h&&p.rec.h.length?p.rec.h.slice():[{at:p.rec.at||'',b:npGot(p)}]):[];
+// 各廠牌：點數／已確認／還沒確認（沒選廠牌時只有一列 ''）
+function npBrandRows(p){
+  const got=npGot(p), bb=brandList().length?(p.bb||{}):{'':p.amt}, g=brandList().length?got:{'':sumVals(got)};
+  return [...new Set([...Object.keys(bb),...Object.keys(g)])].filter(b=>bb[b]||g[b]).sort(brandSort)
+    .map(b=>({b,amt:bb[b]||0,got:g[b]||0,left:(bb[b]||0)-(g[b]||0)}));
+}
+const bLabel=b=>brandList().length?(b||'未選廠牌'):'點數';
+function npPayCell(p){
+  const k=esc(p.pk);
+  if(!p.payable) return '<span class="tag no">沒填姓名，無法確認</span>';
+  if(!p.rec&&!p.amt) return '<span class="mut">—</span>';
+  if(!p.rec) return `<span class="tag no">未確認</span> <button class="btn mini" data-act="pay" data-k="${k}">確認…</button>`;
+  const got=p.rec.amt, left=p.amt-got, lt=npBrandRows(p).filter(x=>x.left>0);
+  let h=(left>0?`<span class="tag no">已確認 ${fmt(got)}／${fmt(p.amt)} 點</span>`:`<span class="tag ok">✓ 已確認 ${fmt(got)} 點</span>`)+
+    ` <input type="date" class="pdate" title="確認日期" value="${esc(p.rec.at||'')}" data-act="date" data-k="${k}"> `+
+    `<button class="btn mini${left>0?'':' ghost'}" data-act="pay" data-k="${k}">${left>0?'再確認…':'看紀錄'}</button> <button class="btn mini ghost" data-act="unpay" data-k="${k}">取消</button>`;
+  if(left>0) h+=`<div class="diff">還沒確認 ${fmt(left)} 點${brandList().length&&lt.length?`（${lt.map(x=>`${esc(bLabel(x.b))} ${fmt(x.left)}`).join('、')}）`:''}</div>`;
+  else if(left<0) h+=`<div class="diff">⚠ 現在算出來是 ${fmt(p.amt)} 點，比已確認的少 ${fmt(-left)} 點　<button class="btn mini outline" data-act="repay" data-k="${k}">改成 ${fmt(p.amt)} 點</button></div>`;
+  return h;
+}
+function showNpPay(pk){
+  const p=findPerson(pk); if(!p||!p.payable) return;
+  const br=npBrandRows(p), hist=npHist(p), hasB=brandList().length>0;
+  $('dlg').innerHTML=`<h2>${esc(p.name)}・${keyLabel(cur)} 確認點數<button class="btn mini ghost" data-act="close">關閉</button></h2>
+    <div class="tw"><table><thead><tr><th class="l">${hasB?'廠牌':''}</th><th>點數</th><th>已確認</th><th>這次確認</th></tr></thead><tbody>`+
+    br.map(x=>`<tr><td class="l"><b>${esc(bLabel(x.b))}</b></td><td class="n">${fmt(x.amt)}</td><td class="n">${fmt(x.got)}</td>`+
+      `<td class="n"><input type="number" class="pay-in" data-b="${esc(x.b)}" inputmode="numeric" min="0" step="1" value="${Math.max(0,x.left)}" style="width:110px"></td></tr>`).join('')+
+    `<tr class="tot"><td class="l">合計</td><td class="n">${fmt(p.amt)}</td><td class="n">${fmt(p.rec?p.rec.amt:0)}</td><td class="amt" id="pay-sum">${fmt(br.reduce((t,x)=>t+Math.max(0,x.left),0))}</td></tr></tbody></table></div>
+    <div class="row">確認日 <input type="date" id="pay-at" value="${today()}"><button class="btn" data-act="pay-save" data-k="${esc(pk)}">儲存</button><button class="btn ghost" data-act="close">取消</button></div>`+
+    (hist.length?`<div class="cumh">確認紀錄</div><div class="tw"><table><thead><tr><th class="l">確認日</th>${hasB?'<th class="l">各廠牌</th>':''}<th>點數</th></tr></thead><tbody>`+
+      hist.slice().reverse().map(x=>`<tr><td class="l">${esc(x.at)}</td>${hasB?`<td class="l" style="white-space:normal">${bbText(x.b)||'—'}</td>`:''}<td class="n">${fmt(sumVals(x.b))}</td></tr>`).join('')+'</tbody></table></div>':'');
+  $('mask').classList.add('on');
+}
+function npPaySum(){ const el=$('pay-sum'); if(!el) return; let t=0; document.querySelectorAll('#dlg .pay-in').forEach(i=>{ t+=Math.round(Number(i.value)||0); }); el.textContent=fmt(t); }
+function npPaySave(pk){
+  const p=findPerson(pk); if(!p||!p.payable) return;
+  const br=npBrandRows(p), add={}; let tot=0, neg=false;
+  document.querySelectorAll('#dlg .pay-in').forEach(i=>{ const v=Math.round(Number(i.value)||0); if(v<0) neg=true; if(v){ add[i.dataset.b]=v; tot+=v; } });
+  if(neg){ alert('這次確認的點數不能是負的。要改掉已確認的，請按「取消」整筆重來。'); return; }
+  if(!tot){ alert('請輸入這次要確認的點數。'); return; }
+  const at=($('pay-at')||{}).value||today(), got=brandList().length?npGot(p):{'':p.rec?p.rec.amt:0}, nb=cleanB(Object.assign({},got));
+  Object.keys(add).forEach(b=>{ nb[b]=(nb[b]||0)+add[b]; });
+  const over=br.filter(x=>(add[x.b]||0)>Math.max(0,x.left)).map(x=>bLabel(x.b)), newAmt=sumVals(nb);
+  const lines=br.map(x=>`${bLabel(x.b)}：這次 ${fmt(add[x.b]||0)}，累計 ${fmt(nb[x.b]||0)}／${fmt(x.amt)}`);
+  if(!confirm(`確認「${p.name}」${keyLabel(cur)}的點數？\n\n${lines.join('\n')}\n\n這次合計 ${fmt(tot)} 點，累計已確認 ${fmt(newAmt)}／${fmt(p.amt)} 點\n確認日 ${at}`+
+    (over.length?`\n\n⚠ ${over.join('、')}這次確認的比還沒確認的多`:''))) return;
+  const rec={amt:newAmt,at,t:Date.now(),h:npHist(p).concat([{at,b:brandList().length?add:{'':tot}}])};
+  if(brandList().length) rec.b=nb;
+  ensureMonth(cur).paid[pk]=rec;
+  saveState(); $('mask').classList.remove('on'); renderAll();
+}
 function doPay(pk){
   const p=findPerson(pk); if(!p||!p.payable) return;
+  if(p.role==='n'){   // 專師：改成現在算出來的點數（各廠牌也照現在的），差額記進確認紀錄
+    if(!confirm(`把「${p.name}」${keyLabel(cur)}已確認的點數改成 ${fmt(p.amt)} 點？`)) return;
+    const at=today(), nb=brandList().length?cleanB(p.bb):{'':p.amt}, d=subB(nb,brandList().length?npGot(p):{'':p.rec?p.rec.amt:0});
+    const rec={amt:p.amt,at,t:Date.now(),h:npHist(p).concat(Object.keys(d).length?[{at,b:d}]:[])}; if(brandList().length) rec.b=nb;
+    ensureMonth(cur).paid[pk]=rec; saveState(); renderAll(); return;
+  }
   ensureMonth(cur).paid[pk]={amt:p.amt,at:(p.rec&&p.rec.at)||today(),t:Date.now()};
   saveState(); renderAll();
 }
@@ -1686,7 +1776,8 @@ function doPayAll(role){
   const who=role==='d'?'醫師':'專師';
   if(!confirm(`把 ${keyLabel(cur)} 還沒確認的 ${list.length} 位${who}（共 ${fmt(list.reduce((s,p)=>s+p.amt,0))} 點）全部標記為已確認？`)) return;
   const pm=ensureMonth(cur), at=today(), t=Date.now();
-  list.forEach(p=>{ pm.paid[p.pk]={amt:p.amt,at,t}; });
+  list.forEach(p=>{ const r=pm.paid[p.pk]={amt:p.amt,at,t};
+    if(p.role==='n'){ const nb=brandList().length?cleanB(p.bb):{'':p.amt}; r.h=[{at,b:nb}]; if(brandList().length) r.b=nb; } });   // 專師：各廠牌全部確認
   saveState(); renderAll();
 }
 
@@ -2165,6 +2256,7 @@ const docRates=products=>{ const o={}; Object.keys(products||{}).forEach(pid=>{ 
 const viewWho=key=>/^d\|/.test(key)?{role:'d',name:key.slice(2)}:{role:'n',name:key};
 function viewBlob(key){
   const {role,name}=viewWho(key);
+  const bm=(state.cfg.brand&&state.cfg.brand.m)||{}, brand={}; Object.keys(bm).forEach(pid=>{ if(bm[pid]) brand[pid]=bm[pid]; });   // 各品項的廠牌（個人頁分廠牌顯示點數用）
   if(role==='d'){
     const live=cfgFor(''), months={}, sets={};
     Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=docRates(ratesFor(k)); });
@@ -2174,19 +2266,20 @@ function viewBlob(key){
       if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
       if(Object.keys(m).length) months[k]=m; });
     const led=Object.keys(state.led||{}).map(id=>state.led[id]).filter(r=>r&&!r.del&&r.pk==='d|'+name).map(r=>({amt:Number(r.amt)||0,at:r.at||'',note:r.note||''}));
-    return {v:1,role:'d',name,url:sheetUrl(),rates:docRates(live.products),sets,months,led,big:bigBlob()};
+    const db={v:1,role:'d',name,url:sheetUrl(),rates:docRates(live.products),sets,months,led,big:bigBlob()};
+    if(Object.keys(brand).length) db.brand=brand;
+    return db;
   }
   const live=cfgFor(''), months={}, sets={};
   // 平分分組：組名＝廠牌（專師頁要分廠牌顯示），名單只給人數與本人在不在
   const vgOf=cfg=>{ if(!cfg||!cfg.pg) return null; const groups={};
     [...new Set(Object.values(cfg.pg))].forEach(g=>{ const S=(cfg.groups||{})[g]||[]; groups[g]={n:S.length,in:S.includes(name)}; });
     return {pg:Object.assign({},cfg.pg),groups}; };
-  const bm=(state.cfg.brand&&state.cfg.brand.m)||{}, brand={}; Object.keys(bm).forEach(pid=>{ if(bm[pid]) brand[pid]=bm[pid]; });   // 各品項的廠牌
   Object.keys(state.cfg.rateSets||{}).forEach(k=>{ const st=state.cfg.rateSets[k]; if(st&&!st.del) sets[k]=npRates(ratesFor(k)); });
   Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(!pm) return;
     const m={}, rec=pm.paid&&pm.paid['n|'+name];
     if(pm.cfg){ m.rates=npRates(pm.cfg.products); m.n=pm.cfg.sharers.length; m.inPool=pm.cfg.sharers.includes(name); const vg=vgOf(pm.cfg); if(vg) m.vg=vg; }
-    if(rec&&!rec.del) m.paid={amt:rec.amt,at:rec.at};
+    if(rec&&!rec.del){ m.paid={amt:rec.amt,at:rec.at}; if(rec.b) m.paid.b=rec.b; }   // b＝各廠牌已確認的點數
     if(Object.keys(m).length) months[k]=m; });
   const b={v:1,role:'n',name,url:sheetUrl(),rates:npRates(live.products),sets,n:live.sharers.length,inPool:live.sharers.includes(name),months,big:bigBlob()};
   const vg=vgOf(live); if(vg) b.vg=vg;
@@ -2271,14 +2364,14 @@ function applyView(b){
   const pool=(n,inPool)=>{ if(doc) return []; const a=inPool?[b.name]:[]; while(a.length<(Number(n)||0)) a.push('\u0001'+a.length); return a; };
   const vgFull=v=>{ if(!v||!v.pg||doc) return null; const groups={}; Object.keys(v.groups||{}).forEach(g=>{ groups[g]=pool(v.groups[g].n,v.groups[g].in); }); return {pg:v.pg,groups}; };
   state.cfg.rates=full(b.rates); state.cfg.sharers=pool(b.n,b.inPool); state.cfg.url=b.url||''; state.cfg.vg=vgFull(b.vg);
-  state.cfg.brand={m:doc?{}:Object.assign({},b.brand||{}),t:0};   // 專師頁：各品項的廠牌（分廠牌顯示點數用）
+  state.cfg.brand={m:Object.assign({},b.brand||{}),t:0};   // 各品項的廠牌（專師頁、醫師頁都分廠牌顯示點數）
   state.cfg.big=b.big?{on:!!b.big.on,min:Number(b.big.min)||0,p:b.big.p||{}}:{on:false,min:0,p:{}};   // 主任那邊還是舊版放的內容就沒有這一段：先不通知
   state.cfg.rateSets={}; Object.keys(b.sets||{}).forEach(k=>{ state.cfg.rateSets[k]={r:full(b.sets[k]),t:0}; });
   state.pay={}; state.led={};
   (doc?b.led||[]:[]).forEach((r,i)=>{ state.led['v'+i]={pk:'d|'+b.name,amt:Number(r.amt)||0,at:r.at||'',note:r.note||'',t:1}; });
   Object.keys(b.months||{}).forEach(k=>{ const m=b.months[k], pm=state.pay[k]={paid:{}};
     if(m.rates){ pm.cfg={products:full(m.rates),sharers:pool(m.n,m.inPool)}; const vg=vgFull(m.vg); if(vg){ pm.cfg.pg=vg.pg; pm.cfg.groups=vg.groups; } }
-    if(m.paid) pm.paid[(doc?'d|':'n|')+b.name]={amt:m.paid.amt,at:m.paid.at,t:1}; });
+    if(m.paid){ const r=pm.paid[(doc?'d|':'n|')+b.name]={amt:m.paid.amt,at:m.paid.at,t:1}; if(m.paid.b) r.b=m.paid.b; } });
 }
 async function loadView(){
   if(!VIEW) return;
@@ -2323,16 +2416,19 @@ function renderMe(ks){
   // 點數說明：這個月適用的各品項每件點數（專師：主要＝負責那一件的人拿的、平分＝每件另外給全體平分名單均分的；醫師：就是醫師那一欄）
   const N=c.cfg.sharers.length, f=doc?'doc':'promo';
   // 專師：點數分廠牌（和主任頁專師點數表的廠牌欄同一個算法）。bl＝要列的廠牌；''＝還沒選廠牌的品項，有點數才列
-  if(!doc) ensureMyBrandTrend();
+  ensureMyBrandTrend();
   const bb=p.bb||{}, pB=(c.np[name]||{}).promoB||{}, bPromo=b=>Math.round(pB[b]||0), bSh=b=>(bb[b]||0)-bPromo(b);
-  const bl=doc||!brandList().length?[]:brandList().concat(Math.round(bb['']||0)?['']:[]), bName=b=>b||'其他品項';
+  const bl=!brandList().length?[]:brandList().concat(Math.round(bb['']||0)?['']:[]), bName=b=>b||'其他品項';
   const bN=b=>groupMembers(c.cfg,brandGroup(c.cfg,b)).length;
+  const bUnits=b=>Object.keys(p.it).reduce((t,pid)=>t+(brandOf(pid)===b?p.it[pid]:0),0);   // 醫師：該廠牌品項的件數
   const grpTxt=c.cfg.pg?(bl.length?bl.filter(b=>b).map(b=>`${esc(b)}品項 ${bN(b)} 位`).join('、'):`${N} 位（部分品項另有自己的平分名單）`):`${N} 位`;
   const expl0=[...new Set([...productList().map(x=>x.id),...Object.keys(c.cfg.products||{})])]
     .map(pid=>({pid,r:rateOf(c.cfg,pid)})).filter(x=>doc?x.r.doc:(x.r.promo||x.r.pool));
-  const expl=bl.length?bl.flatMap(b=>{ const xs=expl0.filter(x=>brandOf(x.pid)===b); return xs.length?[{h:b},...xs]:[]; }):expl0;   // 專師：同一個廠牌的品項排在一起
-  const paidTxt=p.rec?`<span class="tag ok">✓ 已確認 ${shortDate(p.rec.at)}　${fmt(p.rec.amt)} 點</span>`+
-      (p.rec.amt!==p.amt?`<div class="diff">確認之後又有新的紀錄：目前累計 ${fmt(p.amt)} 點，和已確認的差 ${fmt(p.amt-p.rec.amt)} 點，等主任再確認。</div>`:'')
+  const expl=bl.length?[...new Set([...bl,...expl0.map(x=>brandOf(x.pid))])].flatMap(b=>{ const xs=expl0.filter(x=>brandOf(x.pid)===b); return xs.length?[{h:b},...xs]:[]; }):expl0;   // 同一個廠牌的品項排在一起（還沒選廠牌的放最後）
+  const gotB=!doc&&p.rec&&bl.length?npGot(p):null;   // 專師：各廠牌已確認多少
+  const paidTxt=p.rec?`<span class="tag ${p.rec.amt>=p.amt?'ok':'no'}">${p.rec.amt>=p.amt?'✓ ':''}已確認 ${shortDate(p.rec.at)}　${fmt(p.rec.amt)} 點</span>`+
+      (p.rec.amt!==p.amt?`<div class="diff">${p.rec.amt<p.amt?`目前 ${fmt(p.amt)} 點，還有 ${fmt(p.amt-p.rec.amt)} 點等主任確認。`:`目前 ${fmt(p.amt)} 點，比已確認的少 ${fmt(p.rec.amt-p.amt)} 點，等主任再確認。`}</div>`:'')+
+      (gotB?`<div class="sub2">${bl.filter(b=>(bb[b]||0)||(gotB[b]||0)).map(b=>`${esc(bName(b))} 已確認 ${fmt(gotB[b]||0)}／${fmt(bb[b]||0)}`).join('　')}</div>`:'')
     :(p.amt?'<span class="tag no">尚未確認</span>':'<span class="mut">—</span>');
   const me=cur===todayKey()?todayMine(name):null;
   const npTot=people(c).filter(x=>x.role==='n').reduce((t,x)=>t+x.amt,0), pct=npTot?p.amt/npTot*100:null;   // 池子占比（專師頁才有）
@@ -2347,7 +2443,7 @@ function renderMe(ks){
         <div class="s">${vsPrevHtml('myunits',cur)}</div><div class="s">${itTxt}</div></div>
     </div>
     ${bl.length?`<div class="tiles">${bl.map(b=>(b?`<div class="tile clk" data-act="trend" data-m="${esc('myb:'+b)}" role="button"><span class="tg">📈</span>`:'<div class="tile">')+
-      `<div class="l">${esc(bName(b))}點數</div><div class="v">${fmt(bb[b]||0)}</div>${b?`<div class="s">${vsPrevHtml('myb:'+b,cur)}</div>`:''}<div class="s">主要 ${fmt(bPromo(b))}＋平分 ${fmt(bSh(b))}</div></div>`).join('')}</div>`:''}
+      `<div class="l">${esc(bName(b))}點數</div><div class="v">${fmt(bb[b]||0)}</div>${b?`<div class="s">${vsPrevHtml('myb:'+b,cur)}</div>`:''}<div class="s">${doc?`${bUnits(b)} 件`:`主要 ${fmt(bPromo(b))}＋平分 ${fmt(bSh(b))}`}</div></div>`).join('')}</div>`:''}
     ${doc?`<div class="tiles">
       ${noP?`<div class="tile"><div class="l">品項總點數</div><div class="v">—</div><div class="s">等主任的 App 更新後就會顯示</div></div>
       <div class="tile"><div class="l">每小時品項總點數</div><div class="v">—</div><div class="s">${hrTxt}</div></div>`
@@ -2366,9 +2462,9 @@ function renderMe(ks){
       :[{label:'平分',note:'',v:p.share,c:'#9aa7b8'}]).concat(pids.map(pid=>({label:prodName(pid),note:(doc?'':'主要 ')+p.it[pid]+' 件',v:p.it[pid]*rateOf(c.cfg,pid)[f],c:prodColor(pid)}))))}
     <details class="card sec" data-sec="me-expl"${isOpen('me-expl')?' open':''}><summary><span>點數說明</span></summary>`+
     (doc?`<div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>點數</th></tr></thead><tbody>`+
-      (expl.map(x=>`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.doc)}</td></tr>`).join('')||
+      (expl.map(x=>x.h!=null?`<tr class="bgrp"><td class="l" colspan="2">${esc(bName(x.h))}</td></tr>`:`<tr><td class="l">${esc(prodName(x.pid))}</td><td class="n">${fmt(x.r.doc)}</td></tr>`).join('')||
        '<tr><td class="l mut" colspan="2">還沒有設定</td></tr>')+`</tbody></table></div>
-      <div class="sub2">這個月：你的各品項件數 × 上表的點數，加起來＝ ${fmt(p.amt)} 點。</div></details>`
+      <div class="sub2">這個月：你的各品項件數 × 上表的點數，加起來＝ ${fmt(p.amt)} 點${bl.length&&p.amt?`（${bl.filter(b=>bb[b]).map(b=>`${esc(bName(b))} ${fmt(bb[b])} 點`).join('＋')}）`:''}。</div></details>`
     :`<div class="tw"><table><thead><tr><th class="l">品項（每一件）</th><th>主要</th><th>平分</th><th>平分每人</th></tr></thead><tbody>`+
       (expl.map(x=>{ if(x.h!=null) return `<tr class="bgrp"><td class="l" colspan="4">${esc(bName(x.h))}</td></tr>`;   // 廠牌標題列
         const gN=groupMembers(c.cfg,poolGroupOf(c.cfg,x.pid)).length;
@@ -2386,10 +2482,10 @@ function renderMe(ks){
       <div class="tw"><table><thead><tr><th class="l">月份</th><th>件數</th>${doc?'<th>點數</th><th>品項總點數</th><th>上班時數</th><th>每小時</th>':'<th>主要</th><th>平分</th><th>合計</th><th class="l">確認</th>'}</tr></thead><tbody>`+
       all.map(({k,p})=>{ const hh=doc?docHours(name,k):null, rt=perHour(p.sales||0,hh);
         return `<tr><td class="l">${keyLabel(k)}</td><td class="n">${sumVals(p.it)}</td>`+(doc
-          ?`<td class="amt">${fmt(p.amt)}</td><td class="n">${noP?'—':fmt(p.sales||0)}</td><td class="n">${hh==null?'—':hh}</td><td class="n">${noP||rt==null?'—':fmt(rt)}</td></tr>`
+          ?`<td class="amt">${fmt(p.amt)}${bl.length&&p.amt?`<div class="estit gsub">${bl.filter(b=>(p.bb||{})[b]).map(b=>`${esc(bName(b))} ${fmt(p.bb[b])}`).join('<br>')}</div>`:''}</td><td class="n">${noP?'—':fmt(p.sales||0)}</td><td class="n">${hh==null?'—':hh}</td><td class="n">${noP||rt==null?'—':fmt(rt)}</td></tr>`
           :`<td class="n">${fmt(p.promo)}</td><td class="n">${fmt(p.share)}</td><td class="amt">${fmt(p.amt)}`+
            (bl.length&&p.amt?`<div class="estit gsub">${bl.filter(b=>(p.bb||{})[b]).map(b=>`${esc(bName(b))} ${fmt(p.bb[b])}`).join('<br>')}</div>`:'')+`</td>`+
-           `<td class="l">${p.rec?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`); }).join('')+`</tbody></table></div></details>
+           `<td class="l">${p.rec?(p.rec.amt>=p.amt?`<span class="tag ok">✓ ${shortDate(p.rec.at)}</span>`:`<span class="tag no">確認一部分</span>`):p.amt?'<span class="tag no">未確認</span>':'—'}</td></tr>`); }).join('')+`</tbody></table></div></details>
     ${doc?`<div class="card"><h2>累積點數</h2>${cumTiles(cum)}
       <div class="tw" style="margin-top:8px"><table><thead><tr><th class="l">確認日期</th><th>點數</th><th class="l">備註</th></tr></thead><tbody>`+
       (cum.recs.slice().reverse().map(r=>`<tr><td class="l">${esc(r.at)}</td><td class="n">${fmt(r.amt)}</td><td class="l" style="white-space:normal">${esc(r.note)}</td></tr>`).join('')||
@@ -2447,7 +2543,9 @@ function act(a,t,ev){
   else if(a==='mstep') switchMonth(_mbKeys[_mbKeys.indexOf(cur)+Number(t.dataset.d)]);
   else if(a==='mpick'){ pickOpen=!pickOpen; pickYear=null; renderAll(); }
   else if(a==='myear'){ const ys=[...new Set(_mbKeys.map(x=>+x.split('-')[0]))], y=ys[ys.indexOf(pickYear)+Number(t.dataset.d)]; if(y){ pickYear=y; renderAll(); } }
-  else if(a==='pay'||a==='repay') doPay(k);
+  else if(a==='pay'){ if(k&&k[0]==='n') showNpPay(k); else doPay(k); }
+  else if(a==='repay') doPay(k);
+  else if(a==='pay-save') npPaySave(k);
   else if(a==='unpay') doUnpay(k);
   else if(a==='payall') doPayAll(t.dataset.role);
   else if(a==='date'){ const r=state.pay[cur]&&state.pay[cur].paid[k]; if(r&&!r.del&&t.value){ r.at=t.value; r.t=Date.now(); saveState(); renderYear(); } }
@@ -2587,7 +2685,7 @@ document.addEventListener('click',e=>{
 });
 document.addEventListener('change',e=>{ const t=e.target; if(t.dataset&&t.dataset.act&&(t.tagName==='INPUT'||t.tagName==='SELECT')) act(t.dataset.act,t,'change'); });
 // 點數表邊打邊更新右邊的試算欄與「還沒儲存」的提示（按儲存才真的生效）
-document.addEventListener('input',e=>{ const t=e.target; if(t.dataset&&t.dataset.act==='rate') act('rate',t,'input'); });
+document.addEventListener('input',e=>{ const t=e.target; if(t.dataset&&t.dataset.act==='rate') act('rate',t,'input'); if(t.classList&&t.classList.contains('pay-in')) npPaySum(); });
 // 卡片收合／展開（toggle 不會冒泡，要用 capture）→ 記在這台裝置
 document.addEventListener('toggle',e=>{ const d=e.target;
   if(!d.dataset||!d.dataset.sec||isOpen(d.dataset.sec)===d.open) return;   // 和已記的狀態相同（含剛畫出來時瀏覽器自動發的事件）就不用記
