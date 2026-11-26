@@ -270,7 +270,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.26a';
+const APP_VER='2026.11.26b';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -1511,6 +1511,11 @@ function ensureBrandTrend(){
   brandList().forEach(b=>{
     if(!TREND['b:'+b]){ TREND['b:'+b]={title:b+' 總點數',unit:'點',get:k=>calcMonth(k).bv[b]||0,hist:k=>histBv(k)[b]||0,est:1,brand:b}; MTD['b:'+b]=mtd(b,vendOf); }
     if(!TREND['bs:'+b]){ TREND['bs:'+b]={title:b+' 品項總點數',unit:'點',get:k=>calcMonth(k).bs[b]||0,hist:k=>histBs(k)[b]||0,est:1,brand:b}; MTD['bs:'+b]=mtd(b,x=>x.price); }
+    // 廠牌品項總點數磚點下去：和「品項總點數」一樣先看逐日累進＋逐日（只算該廠牌的品項）
+    if(!CUM['bs:'+b]) CUM['bs:'+b]=key=>{ const live=ratesFor(key), cum=[0];
+      const ds=dailySums(key,(r,c)=>Object.keys(r.it).reduce((x,pid)=>x+(brandOf(pid)===b?pidVal(r,c,live,pid,'price'):0),0));
+      for(let d=1;d<=ds.D;d++) cum[d]=cum[d-1]+ds.sum[d];
+      return {ds,cum,daily:1}; };
   });
 }
 // 專師個人頁的各廠牌點數磚：TREND／MTD 的鍵是「myb:廠牌」（值和主任頁專師點數表的廠牌欄一樣，見 npByBrand）
