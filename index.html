@@ -270,7 +270,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.25c';
+const APP_VER='2026.11.26a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -936,7 +936,8 @@ function applyLockVer(){
 // 本機設定檔交代的一次性調整（各有自己的 VERSION，每個版本只做一次，做完跟著加密雲端同步到其他裝置）：
 //  ・COMMISSION_BRAND_SHARERS：{廠牌:[姓名…]}——這個廠牌的品項另外用自己的平分名單（其他品項照原本的平分名單）
 //  ・COMMISSION_RATE_PATCH：指定品項的每件點數，套到最初的設定和每個月自己的那一組（已確認的月份照當時的快照不動）；
-//    銀泡棉(小)還沒選廠牌時跟著銀泡棉(大)
+//    銀泡棉(小)還沒選廠牌時跟著銀泡棉(大)。有 COMMISSION_RATE_PATCH_SNAP_FROM（民國 年-月）時，那個月起已確認月份的快照也一起改
+//    （已確認的人會顯示差額）
 function applyPatches(){
   const c=state.cfg, now=Date.now(); let ch=false;
   const bv=window.COMMISSION_BRAND_SHARERS_VERSION, bsp=window.COMMISSION_BRAND_SHARERS;
@@ -950,6 +951,8 @@ function applyPatches(){
     const put=o=>Object.keys(rp).forEach(pid=>{ const u=o[pid]||(o[pid]={}); Object.keys(rp[pid]).forEach(f=>{ if(FIELDS.includes(f)) u[f]=Math.max(0,Number(rp[pid][f])||0); }); });
     put(c.rates); c.tR=now;
     Object.keys(c.rateSets||{}).forEach(k=>{ const st=c.rateSets[k]; if(!st||st.del) return; st.r=st.r||{}; put(st.r); st.t=now; });
+    const sf=window.COMMISSION_RATE_PATCH_SNAP_FROM;
+    if(sf) Object.keys(state.pay).forEach(k=>{ const pm=state.pay[k]; if(k<sf||!pm||!pm.cfg||!pm.cfg.products) return; put(pm.cfg.products); pm.cfgT=now; });
     if(c.brand&&c.brand.m&&!c.brand.m.silverS&&c.brand.m.silver){ c.brand.m.silverS=c.brand.m.silver; c.brand.t=now; }
     c.ratePatchV=rv; ch=true;
   }
