@@ -270,7 +270,7 @@ if(location.protocol==='file:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostn
 // 只下載 序／日期／品項數量／專師／醫師 欄，其他欄位不下載、不儲存。
 // ============================================================
 const LS='erCommission_v1';
-const APP_VER='2026.11.26b';
+const APP_VER='2026.11.28a';
 const PUBLIC_URL='https://leo005741010-byte.github.io/er-points/';   // 本機檔（file://）產生連結時用
 // ---- 個人查看模式 ----
 // 專師用的入口是 me.html（它載入這同一份程式、但先設 window.VIEW_ONLY）：只顯示本人的點數，
@@ -463,8 +463,16 @@ const capGrpOf=(cfg,pid)=>{ const cp=cfg&&cfg.cap; return cp&&cp.grp&&Array.isAr
 const poolGroupOf=(cfg,pid)=>capGrpOf(cfg,pid)||(cfg&&cfg.pg&&cfg.pg[pid])||'';
 const groupMembers=(cfg,g)=>g?(((cfg.groups||{})[g])||(cfg.cap&&cfg.cap.grp===g&&Array.isArray(cfg.cap.to)?cfg.cap.to:[])):cfg.sharers;
 const inAnyPool=(cfg,name)=>cfg.sharers.includes(name)||Object.values(cfg.groups||{}).some(S=>S.includes(name));
+// 平分分組一律跟著「現在」每件點數表選的廠牌走（2026-11-28 主任：勾選莫尼克的品項，平分只給那 4 位）。
+// 快照是第一次確認時存的，之後才選廠牌的品項（平癒速）快照裡沒有分組，原本會掉進預設那一組（全部平分名單）。
+// 各組名單：快照裡有那一組就用快照的（確認當時固定下來的），快照沒有的組才用現在的
+function livePg(c){
+  const g=poolGroups(), pg=(g&&g.pg)||{}, groups=Object.assign({},(g&&g.groups)||{},c.groups||{});
+  if(JSON.stringify(pg)===JSON.stringify(c.pg||{})&&JSON.stringify(groups)===JSON.stringify(c.groups||{})) return c;
+  const o=Object.assign({},c,{groups}); if(Object.keys(pg).length) o.pg=pg; else delete o.pg; return o;
+}
 // 有確認紀錄的月份用當時固定下來的設定（pm.cfg）；其餘照 cfgFor
-function monthCfg(key){ const pm=state.pay[key]; if(pm&&pm.cfg){ const lc=liveCap(); return capStale(pm.cfg.cap,lc)?Object.assign({},pm.cfg,{cap:lc}):pm.cfg; } return cfgFor(key); }   // 上限出現以前留的快照沒有 cap：跟著現在的上限（只從開始那天起算）
+function monthCfg(key){ const pm=state.pay[key]; if(pm&&pm.cfg){ const lc=liveCap(), c=capStale(pm.cfg.cap,lc)?Object.assign({},pm.cfg,{cap:lc}):pm.cfg; return VIEW?c:livePg(c); } return cfgFor(key); }   // 上限出現以前留的快照沒有 cap：跟著現在的上限（只從開始那天起算）；個人頁的分組主任端已經算好
 // 表格上要顯示的：這個月實際在用的每件點數
 function monthRates(key){ const cfg=monthCfg(key), live=ratesFor(key), o={}; productList().forEach(p=>{ o[p.id]=rateOf(cfg,p.id,live); }); return o; }
 function paidOf(key){   // 只回有效的確認紀錄（取消的 {del:1} 不算）
@@ -490,7 +498,7 @@ function rateOf(cfg,pid,live){
 }
 function calcMonth(key,cfgOverride){
   const md=state.data.months[key], cfg=cfgOverride||monthCfg(key), live=ratesFor(key), rc={};
-  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,poolG:{},poolBm:{},fund:0,fundIt:{},vendor:0,units:0,sales:0,cost:0,noPrice:{},zeroRate:{},bv:{},bs:{}};   // poolG＝各平分組的池；poolBm＝預設那一組的池按廠牌分   // bv／bs＝各廠牌的總點數／品項總點數（'' 是還沒選廠牌的品項）
+  const c={key,cfg,rows:(md&&md.rows)||[],gone:!!(md&&md.gone),prod:{},doc:{},np:{},pool:0,poolG:{},poolBm:{},fund:0,fundIt:{},vendor:0,units:0,sales:0,cost:0,noPrice:{},zeroRate:{},bv:{},bs:{},bc:{}};   // poolG＝各平分組的池；poolBm＝預設那一組的池按廠牌分   // bv／bs／bc＝各廠牌的總點數／品項總點數／原始總點數（'' 是還沒選廠牌的品項）
   c.capQ={};   // 這個月各品項超過每一筆上限的件數
   c.rows.forEach(r=>{ const ov=capOver(r,cfg,key)||{}; Object.keys(r.it).forEach(pid=>{
     const q=r.it[pid], rt=rc[pid]||(rc[pid]=rateOf(cfg,pid,live)), bk=brandOf(pid), o=ov[pid]||0;   // o＝超過上限的件數
@@ -500,6 +508,7 @@ function calcMonth(key,cfgOverride){
     c.cost+=q*rt.cost;
     c.bv[bk]=(c.bv[bk]||0)+q*(rt.doc+rt.promo+rt.pool+rt.fund);
     c.bs[bk]=(c.bs[bk]||0)+q*rt.price;   // 各廠牌的品項總點數
+    c.bc[bk]=(c.bc[bk]||0)+q*rt.cost;    // 各廠牌的原始總點數
     const d=c.doc[r.doc]||(c.doc[r.doc]={it:{},amt:0,sales:0,amtB:{}}); d.it[pid]=(d.it[pid]||0)+q; d.amt+=q*rt.doc; d.sales+=q*rt.price;
     d.amtB[bk]=(d.amtB[bk]||0)+q*rt.doc;   // 醫師各廠牌的點數
     const n=c.np[r.np]||(c.np[r.np]={it:{},promo:0,share:0,promoB:{},capQ:0}); n.it[pid]=(n.it[pid]||0)+q; n.promo+=(q-o)*rt.promo;
@@ -1237,6 +1246,7 @@ function renderMonth(){
     <div class="tile clk" data-act="trend" data-m="vendor" role="button"><span class="tg">📈</span><div class="l">總點數</div><div class="v">${fmt(c.vendor)}</div><div class="s">醫師＋專師${fp?'＋科部':''}</div></div>
     ${brandList().map(b=>`<div class="tile clk" data-act="trend" data-m="${esc('b:'+b)}" role="button"><span class="tg">📈</span><div class="l">${esc(b)} 總點數</div><div class="v">${fmt(c.bv[b]||0)}</div><div class="s">${vsPrevHtml('b:'+b,cur)}</div></div>`).join('')}
     <div class="tile clk" data-act="trend" data-m="cost" role="button"><span class="tg">📈</span><div class="l">原始總點數</div><div class="v">${fmt(c.cost)}</div><div class="s">${c.cost?vsPrevHtml('cost',cur):'還沒填原始點數'}</div></div>
+    ${brandList().map(b=>`<div class="tile clk" data-act="trend" data-m="${esc('bc:'+b)}" role="button"><span class="tg">📈</span><div class="l">${esc(b)} 原始總點數</div><div class="v">${fmt(c.bc[b]||0)}</div><div class="s">${c.bc[b]?vsPrevHtml('bc:'+b,cur):'還沒填原始點數'}</div></div>`).join('')}
     <div class="tile clk" data-act="trend" data-m="diff" role="button"><span class="tg">📈</span><div class="l">總點數差</div><div class="v">${fmt(c.sales-c.cost)}</div><div class="s">品項總點數 − 原始總點數</div></div>
     <div class="tile clk" data-act="trend" data-m="rebate" role="button"><span class="tg">📈</span><div class="l">折讓點數</div><div class="v">${fmt(c.cost-c.vendor)}</div><div class="s">${c.cost?vsPrevHtml('rebate',cur):'還沒填原始點數'}</div></div>
     <div class="tile"><div class="l">醫師點數合計</div><div class="v">${fmt(dTot)}</div><div class="s">${docs.filter(p=>p.amt>0).length} 位</div></div>
@@ -1496,7 +1506,7 @@ const vendOf=x=>x.doc+x.promo+x.pool+x.fund;
 // 更早的月份（cfg.hist）：用推估件數按廠牌換算。f＝每件要乘的值（總點數用 vendOf、品項總點數用品項點數）
 function histByBrand(k,f){ const it=histOf(k).it||{}, r=ratesFor(k), o={};
   Object.keys(it).forEach(pid=>{ const b=brandOf(pid); o[b]=(o[b]||0)+it[pid]*f(r[pid]||ZERO); }); return o; }
-const histBv=k=>histByBrand(k,vendOf), histBs=k=>histByBrand(k,x=>x.price||0);
+const histBv=k=>histByBrand(k,vendOf), histBs=k=>histByBrand(k,x=>x.price||0), histBc=k=>histByBrand(k,x=>x.cost||0);
 const bvOf=k=>state.data.months[k]?calcMonth(k).bv:histBv(k);
 // [{name,note,v,c}]：每個廠牌一項，還沒選廠牌的品項併成「未選廠牌」，加起來等於總點數
 function brandParts(bv){
@@ -1505,12 +1515,14 @@ function brandParts(bv){
   if(Math.round(o)) out.push({name:'未選廠牌',note:'',v:o,c:'#b8c2cc'});
   return out;
 }
-// 廠牌磚的趨勢：TREND／MTD 的鍵是「b:廠牌」（總點數）與「bs:廠牌」（品項總點數），用到時才補上
+// 廠牌磚的趨勢：TREND／MTD 的鍵是「b:廠牌」（總點數）、「bs:廠牌」（品項總點數）與「bc:廠牌」（原始總點數），用到時才補上
 function ensureBrandTrend(){
   const mtd=(b,f)=>(k,d)=>mtdSum(k,d,(r,c,live)=>Object.keys(r.it).reduce((x,pid)=>x+(brandOf(pid)===b?r.it[pid]*f(rateOf(c.cfg,pid,live)):0),0));
   brandList().forEach(b=>{
     if(!TREND['b:'+b]){ TREND['b:'+b]={title:b+' 總點數',unit:'點',get:k=>calcMonth(k).bv[b]||0,hist:k=>histBv(k)[b]||0,est:1,brand:b}; MTD['b:'+b]=mtd(b,vendOf); }
     if(!TREND['bs:'+b]){ TREND['bs:'+b]={title:b+' 品項總點數',unit:'點',get:k=>calcMonth(k).bs[b]||0,hist:k=>histBs(k)[b]||0,est:1,brand:b}; MTD['bs:'+b]=mtd(b,x=>x.price); }
+    // 原始總點數分廠牌（2026-11-28）：更早的月份只有報表上的合計，按推估件數 × 各品項原始點數拆，算推估
+    if(!TREND['bc:'+b]){ TREND['bc:'+b]={title:b+' 原始總點數',unit:'點',get:k=>calcMonth(k).bc[b]||0,hist:k=>histBc(k)[b]||0,est:1,brand:b}; MTD['bc:'+b]=mtd(b,x=>x.cost); }
     // 廠牌品項總點數磚點下去：和「品項總點數」一樣先看逐日累進＋逐日（只算該廠牌的品項）
     if(!CUM['bs:'+b]) CUM['bs:'+b]=key=>{ const live=ratesFor(key), cum=[0];
       const ds=dailySums(key,(r,c)=>Object.keys(r.it).reduce((x,pid)=>x+(brandOf(pid)===b?pidVal(r,c,live,pid,'price'):0),0));
@@ -1678,13 +1690,14 @@ function showTrend(m){
   const who=m==='sales'&&!VIEW&&cur&&state.data.months[cur]?people(calcMonth(cur)).filter(p=>p.role==='d'&&p.sales>0):[];
   const whoH=(who.length?`<div class="cumh">${keyLabel(cur)}・各醫師的占比</div>`+mixHtml(who.map(p=>({label:p.name||'（未填醫師）',note:sumVals(p.it)+' 件',v:p.sales,c:personColor('d',p.name)}))):'')+
     // 主任頁點「總點數」：最上面先看這個月各廠牌各多少（有選廠牌才有）
-    (m==='vendor'&&!VIEW&&cur&&state.data.months[cur]&&brandList().length?(()=>{ const mh=mixHtml(brandParts(calcMonth(cur).bv).map(x=>({label:x.name,note:x.note,v:x.v,c:x.c})));
-      return mh?`<div class="cumh">${keyLabel(cur)}・各廠牌的總點數</div>${mh}`:''; })():'');
+    // 「原始總點數」也一樣：最上面先看這個月各廠牌各多少
+    ((m==='vendor'||m==='cost')&&!VIEW&&cur&&state.data.months[cur]&&brandList().length?(()=>{ const mh=mixHtml(brandParts(calcMonth(cur)[m==='cost'?'bc':'bv']).map(x=>({label:x.name,note:x.note,v:x.v,c:x.c})));
+      return mh?`<div class="cumh">${keyLabel(cur)}・各廠牌的${m==='cost'?'原始總點數':'總點數'}</div>${mh}`:''; })():'');
   $('dlg').innerHTML=`<h2>${T.title}${cumH?'':'・逐月趨勢'}<button class="btn mini ghost" data-act="close">關閉</button></h2>
     ${whoH}${cumH}${pts.length?lineSvg(pts,cur):'<div class="empty">還沒有資料</div>'}
     <div class="tw"><table><thead><tr><th class="l">月份</th><th>${T.title}</th><th>較上月</th></tr></thead><tbody>`+
     pts.map((p,i)=>{ const sp=prevSamePeriod(m,p.k), pv=sp?sp.pv:(i>0&&pts[i-1].k===shiftKey(p.k,-1)?pts[i-1].v:null), d=pv==null?null:pctVs(p.v,pv);
-      const gx=m==='vendor'&&!VIEW&&brandList().length?brandParts(bvOf(p.k)):null;   // 總點數：每個月的值下面列各廠牌各多少
+      const gx=!VIEW&&brandList().length?(m==='vendor'?brandParts(bvOf(p.k)):m==='cost'&&!p.h?brandParts(calcMonth(p.k).bc):null):null;   // 總點數／原始總點數：每個月的值下面列各廠牌各多少（原始總點數更早的月份是報表上的合計，不拆）
       const itx=p.e&&m!=='diff'&&m!=='rebate'?itTxt(p.k):'';
       return `<tr${p.k===cur?' class="tot"':''}><td class="l">${keyLabel(p.k)}${p.h?`<span class="est">${p.e?'推估':'報表'}</span>`:''}${itx?`<div class="estit">推估件數：${itx}</div>`:''}</td><td class="n">${fmt(p.v)} ${T.unit}${gx?`<div class="estit gsub">${gx.map(x=>`${esc(x.name)} ${fmt(x.v)}`).join('<br>')}</div>`:''}</td><td class="n">${d==null?'—':pctHtml(d)+(sp?'<span class="est">同期</span>':'')}</td></tr>`; }).join('')+
     `</tbody></table></div>`+
